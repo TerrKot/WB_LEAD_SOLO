@@ -12,7 +12,13 @@
 ## Установка
 
 ```bash
+# Windows
 pip install -r requirements.txt
+
+# Linux/Mac
+pip3 install -r requirements.txt
+# или
+python3 -m pip install -r requirements.txt
 ```
 
 ## Как это работает
