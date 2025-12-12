@@ -61,7 +61,11 @@ pip install -r requirements.txt
 Запустите утилиту в интерактивном режиме:
 
 ```bash
+# Windows
 python cli.py
+
+# Linux/Mac
+python3 cli.py
 ```
 
 После запуска вы увидите приглашение для ввода. Можете вводить:
