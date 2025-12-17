@@ -1,0 +1,311 @@
+"""Service for notifying users about calculation results."""
+import asyncio
+import json
+from typing import Optional, Dict, Any
+import structlog
+
+from apps.bot_service.clients.redis import RedisClient
+from aiogram import Bot
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+logger = structlog.get_logger()
+
+
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """Get main persistent keyboard with 'Новый запрос' button."""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Новый запрос")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+    return keyboard
+
+
+class ResultNotifier:
+    """Service for checking calculation results and notifying users."""
+
+    def __init__(self, bot: Bot, redis_client: RedisClient):
+        """
+        Initialize result notifier.
+
+        Args:
+            bot: Telegram Bot instance
+            redis_client: Redis client
+        """
+        self.bot = bot
+        self.redis = redis_client
+
+    async def check_and_notify(self, calculation_id: str, user_id: int, status_message_id: int) -> bool:
+        """
+        Check calculation result and notify user if ready by editing status message.
+
+        Args:
+            calculation_id: Calculation ID
+            user_id: Telegram user ID
+            status_message_id: Message ID to edit
+
+        Returns:
+            True if result was found and sent, False otherwise
+        """
+        try:
+            # Get calculation status
+            status = await self.redis.get_calculation_status(calculation_id)
+            
+            if status in ("blocked", "completed", "failed", "orange_zone"):
+                # Get result
+                result = await self.redis.get_calculation_result(calculation_id)
+                
+                if result:
+                    # Check if result was already sent to prevent duplicate messages
+                    notification_sent_key = f"calculation:{calculation_id}:notification_sent"
+                    notification_sent = await self.redis.redis.get(notification_sent_key)
+                    if notification_sent:
+                        # Result was already sent, don't send again
+                        return True
+                    
+                    await self._edit_result_message(user_id, status_message_id, result)
+                    # Mark as sent to prevent duplicate notifications
+                    await self.redis.redis.setex(notification_sent_key, 86400, "1")  # 24 hours TTL
+                    return True
+            
+            # Also check for assessment statuses (🟢/🟡/🟠/🔴)
+            result = await self.redis.get_calculation_result(calculation_id)
+            if result:
+                assessment_status = result.get("status")
+                if assessment_status in ("🟢", "🟡", "🟠", "🔴"):
+                    # Check if result was already sent to prevent duplicate messages
+                    notification_sent_key = f"calculation:{calculation_id}:notification_sent"
+                    notification_sent = await self.redis.redis.get(notification_sent_key)
+                    if notification_sent:
+                        # Result was already sent, don't send again
+                        return True
+                    
+                    await self._edit_result_message(user_id, status_message_id, result)
+                    # Mark as sent to prevent duplicate notifications
+                    await self.redis.redis.setex(notification_sent_key, 86400, "1")  # 24 hours TTL
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.error(
+                "result_check_error",
+                calculation_id=calculation_id,
+                user_id=user_id,
+                error=str(e)
+            )
+            return False
+
+    async def _edit_result_message(self, user_id: int, message_id: int, result: Dict[str, Any]):
+        """
+        Edit status message with calculation result.
+
+        Args:
+            user_id: Telegram user ID
+            message_id: Message ID to edit
+            result: Calculation result
+        """
+        status = result.get("status")
+        
+        # Check if this is a detailed calculation result
+        calculation_type = result.get("calculation_type")
+        
+        if calculation_type == "detailed":
+            # Detailed calculation result
+            message_text = result.get("message", "✅ Подробный расчёт завершён")
+            
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    text=message_text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                # If edit fails (e.g., message was deleted), don't send new message automatically
+                # This prevents unsolicited messages to users
+                logger.warning(
+                    "message_edit_failed_not_sending_new",
+                    error=str(e),
+                    user_id=user_id,
+                    message_id=message_id,
+                    calculation_id=result.get("calculation_id")
+                )
+                # Don't send new message - user may have deleted the status message intentionally
+            
+            logger.info(
+                "detailed_calculation_notification_sent",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id")
+            )
+        
+        elif status == "blocked":
+            # Red zone blocked - use formatted message from result if available
+            message_text = result.get("message")
+            if not message_text:
+                # Fallback to template if message not in result
+                tn_ved_code = result.get("tn_ved_code", "N/A")
+                reason = result.get("red_zone_reason", "Товар попадает в красную зону")
+                message_text = (
+                    f"🔴 <b>Экспресс-расчёт завершён</b>\n\n"
+                    f"Код ТН ВЭД: <code>{tn_ved_code}</code>\n"
+                    f"Причина: {reason}\n\n"
+                    f"Товар не может быть доставлен белой логистикой."
+                )
+            
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    text=message_text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                # Don't send new message if edit fails - user may have deleted it
+                logger.warning(
+                    "message_edit_failed_not_sending_new",
+                    error=str(e),
+                    user_id=user_id,
+                    message_id=message_id,
+                    calculation_id=result.get("calculation_id")
+                )
+            
+            logger.info(
+                "red_zone_notification_sent",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                tn_ved_code=tn_ved_code
+            )
+        
+        elif status == "orange_zone" or status == "🟠":
+            # Orange zone blocked
+            message_text = result.get("message", "🟠 Экспресс-расчёт завершён")
+            
+            # Add button for detailed calculation
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📊 Подробный расчёт",
+                        callback_data=f"detailed_calculation:{result.get('calculation_id')}"
+                    )
+                ]
+            ])
+            
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    text=message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.warning("message_edit_failed_sending_new", error=str(e))
+                await self.bot.send_message(
+                    user_id,
+                    message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            
+            logger.info(
+                "orange_zone_notification_sent",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id")
+            )
+        
+        elif (status == "completed" or status in ("🟢", "🟡")) and calculation_type != "detailed":
+            # Express assessment completed (🟢 or 🟡) - but not detailed calculation
+            message_text = result.get("message", "✅ Расчёт завершён")
+            
+            # For 🟢 and 🟡, we need to add buttons for detailed calculation
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            
+            keyboard = None
+            if status in ("🟢", "🟡"):
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📊 Подробный расчёт",
+                            callback_data=f"detailed_calculation:{result.get('calculation_id')}"
+                        )
+                    ]
+                ])
+            
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    text=message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.warning("message_edit_failed_sending_new", error=str(e))
+                await self.bot.send_message(
+                    user_id,
+                    message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            
+            logger.info(
+                "calculation_completed_notification_sent",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                assessment_status=status
+            )
+        
+        elif status == "failed":
+            # Calculation failed
+            error_message = result.get("message", "Произошла ошибка при расчёте")
+            message_text = f"❌ {error_message}\n\nПопробуйте начать заново с /start"
+            
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    text=message_text
+                )
+            except Exception as e:
+                logger.warning("message_edit_failed_sending_new", error=str(e))
+                await self.bot.send_message(
+                    user_id,
+                    message_text
+                )
+            
+            logger.info(
+                "calculation_failed_notification_sent",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id")
+            )
+
+    async def start_polling(self, check_interval: float = 2.0):
+        """
+        Start polling for calculation results.
+
+        Args:
+            check_interval: Interval between checks in seconds
+        """
+        logger.info("result_notifier_started", check_interval=check_interval)
+        
+        while True:
+            try:
+                # Get all pending calculations
+                # This is a simplified approach - in production, use Redis pub/sub or similar
+                await asyncio.sleep(check_interval)
+                
+                # Note: This is a basic implementation
+                # For production, consider using Redis pub/sub or a dedicated queue
+                # for result notifications
+                
+            except asyncio.CancelledError:
+                logger.info("result_notifier_stopped")
+                break
+            except Exception as e:
+                logger.error("result_notifier_error", error=str(e))
+                await asyncio.sleep(check_interval)
+

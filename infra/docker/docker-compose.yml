@@ -1,0 +1,68 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: wb_lead_redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 5s
+    stop_signal: SIGTERM
+    networks:
+      - wb_lead_network
+
+  bot_service:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    container_name: wb_lead_bot_service
+    env_file:
+      - ../../.env
+    ports:
+      - "8443:8090"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGTERM
+    command: ["python", "apps/bot_service/main.py"]
+    networks:
+      - wb_lead_network
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://app:app@bd_demo_postgres:5432/bd_demo
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    container_name: wb_lead_worker
+    env_file:
+      - ../../.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGTERM
+    command: ["python", "apps/bot_service/workers/calculation_worker.py"]
+    networks:
+      - wb_lead_network
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://app:app@bd_demo_postgres:5432/bd_demo
+
+volumes:
+  redis_data:
+
+networks:
+  wb_lead_network:
+    external: false
