@@ -39,12 +39,12 @@ class ResultNotifier:
 
     async def check_and_notify(self, calculation_id: str, user_id: int, status_message_id: int) -> bool:
         """
-        Check calculation result and notify user if ready by editing status message.
+        Check calculation result and notify user if ready by deleting status message and sending new one with keyboard.
 
         Args:
             calculation_id: Calculation ID
             user_id: Telegram user ID
-            status_message_id: Message ID to edit
+            status_message_id: Message ID to delete
 
         Returns:
             True if result was found and sent, False otherwise
@@ -65,7 +65,7 @@ class ResultNotifier:
                         # Result was already sent, don't send again
                         return True
                     
-                    await self._edit_result_message(user_id, status_message_id, result)
+                    await self._send_result_message(user_id, status_message_id, result)
                     # Mark as sent to prevent duplicate notifications
                     await self.redis.redis.setex(notification_sent_key, 86400, "1")  # 24 hours TTL
                     return True
@@ -82,7 +82,7 @@ class ResultNotifier:
                         # Result was already sent, don't send again
                         return True
                     
-                    await self._edit_result_message(user_id, status_message_id, result)
+                    await self._send_result_message(user_id, status_message_id, result)
                     # Mark as sent to prevent duplicate notifications
                     await self.redis.redis.setex(notification_sent_key, 86400, "1")  # 24 hours TTL
                     return True
@@ -97,13 +97,13 @@ class ResultNotifier:
             )
             return False
 
-    async def _edit_result_message(self, user_id: int, message_id: int, result: Dict[str, Any]):
+    async def _send_result_message(self, user_id: int, status_message_id: int, result: Dict[str, Any]):
         """
-        Edit status message with calculation result.
+        Delete status message and send new message with calculation result and keyboard.
 
         Args:
             user_id: Telegram user ID
-            message_id: Message ID to edit
+            status_message_id: Message ID to delete
             result: Calculation result
         """
         status = result.get("status")
@@ -111,28 +111,32 @@ class ResultNotifier:
         # Check if this is a detailed calculation result
         calculation_type = result.get("calculation_type")
         
+        # Delete intermediate status message
+        try:
+            await self.bot.delete_message(chat_id=user_id, message_id=status_message_id)
+        except Exception as e:
+            # If delete fails (e.g., message was already deleted), log and continue
+            logger.warning(
+                "status_message_delete_failed",
+                error=str(e),
+                user_id=user_id,
+                message_id=status_message_id,
+                calculation_id=result.get("calculation_id")
+            )
+        
+        # Get main keyboard with "Новый запрос" button
+        main_keyboard = get_main_keyboard()
+        
         if calculation_type == "detailed":
             # Detailed calculation result
             message_text = result.get("message", "✅ Подробный расчёт завершён")
             
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=message_id,
-                    text=message_text,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                # If edit fails (e.g., message was deleted), don't send new message automatically
-                # This prevents unsolicited messages to users
-                logger.warning(
-                    "message_edit_failed_not_sending_new",
-                    error=str(e),
-                    user_id=user_id,
-                    message_id=message_id,
-                    calculation_id=result.get("calculation_id")
-                )
-                # Don't send new message - user may have deleted the status message intentionally
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=message_text,
+                parse_mode="HTML",
+                reply_markup=main_keyboard
+            )
             
             logger.info(
                 "detailed_calculation_notification_sent",
@@ -154,28 +158,18 @@ class ResultNotifier:
                     f"Товар не может быть доставлен белой логистикой."
                 )
             
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=message_id,
-                    text=message_text,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                # Don't send new message if edit fails - user may have deleted it
-                logger.warning(
-                    "message_edit_failed_not_sending_new",
-                    error=str(e),
-                    user_id=user_id,
-                    message_id=message_id,
-                    calculation_id=result.get("calculation_id")
-                )
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=message_text,
+                parse_mode="HTML",
+                reply_markup=main_keyboard
+            )
             
             logger.info(
                 "red_zone_notification_sent",
                 user_id=user_id,
                 calculation_id=result.get("calculation_id"),
-                tn_ved_code=tn_ved_code
+                tn_ved_code=result.get("tn_ved_code", "N/A")
             )
         
         elif status == "orange_zone" or status == "🟠":
@@ -185,7 +179,7 @@ class ResultNotifier:
             # Add button for detailed calculation
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text="📊 Подробный расчёт",
@@ -194,22 +188,21 @@ class ResultNotifier:
                 ]
             ])
             
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=message_id,
-                    text=message_text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-            except Exception as e:
-                logger.warning("message_edit_failed_sending_new", error=str(e))
-                await self.bot.send_message(
-                    user_id,
-                    message_text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
+            # Send message with inline keyboard (inline buttons appear under message)
+            # Reply keyboard will be sent in separate message to ensure it's always visible
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=message_text,
+                parse_mode="HTML",
+                reply_markup=inline_keyboard
+            )
+            
+            # Send separate message with reply keyboard to ensure it's always visible under input
+            await self.bot.send_message(
+                chat_id=user_id,
+                text="💡 Используйте кнопку ниже для нового запроса",
+                reply_markup=main_keyboard
+            )
             
             logger.info(
                 "orange_zone_notification_sent",
@@ -224,9 +217,9 @@ class ResultNotifier:
             # For 🟢 and 🟡, we need to add buttons for detailed calculation
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             
-            keyboard = None
+            inline_keyboard = None
             if status in ("🟢", "🟡"):
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
                             text="📊 Подробный расчёт",
@@ -235,21 +228,27 @@ class ResultNotifier:
                     ]
                 ])
             
-            try:
-                await self.bot.edit_message_text(
+            # If we have inline keyboard, send it first, then reply keyboard separately
+            if inline_keyboard:
+                await self.bot.send_message(
                     chat_id=user_id,
-                    message_id=message_id,
                     text=message_text,
                     parse_mode="HTML",
-                    reply_markup=keyboard
+                    reply_markup=inline_keyboard
                 )
-            except Exception as e:
-                logger.warning("message_edit_failed_sending_new", error=str(e))
+                # Send separate message with reply keyboard to ensure it's always visible
                 await self.bot.send_message(
-                    user_id,
-                    message_text,
+                    chat_id=user_id,
+                    text="💡 Используйте кнопку ниже для нового запроса",
+                    reply_markup=main_keyboard
+                )
+            else:
+                # No inline buttons, just send with reply keyboard
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
                     parse_mode="HTML",
-                    reply_markup=keyboard
+                    reply_markup=main_keyboard
                 )
             
             logger.info(
@@ -264,18 +263,11 @@ class ResultNotifier:
             error_message = result.get("message", "Произошла ошибка при расчёте")
             message_text = f"❌ {error_message}\n\nПопробуйте начать заново с /start"
             
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=message_id,
-                    text=message_text
-                )
-            except Exception as e:
-                logger.warning("message_edit_failed_sending_new", error=str(e))
-                await self.bot.send_message(
-                    user_id,
-                    message_text
-                )
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=message_text,
+                reply_markup=main_keyboard
+            )
             
             logger.info(
                 "calculation_failed_notification_sent",

@@ -436,7 +436,11 @@ async def handle_article_input(message: Message, state: FSMContext):
         asyncio.create_task(_poll_calculation_result(bot, redis_client, calculation_id, user_id, calculation_status_message_id))
 
 
-# Removed handle_new_request_button - using bot menu command /newrequest instead
+@router.message(F.text == "Новый запрос")
+async def handle_new_request_button(message: Message, state: FSMContext):
+    """Handle 'Новый запрос' button click - same as /newrequest command."""
+    await handle_start_logic(message, state)
+    logger.info("new_request_button_clicked", user_id=message.from_user.id)
 
 
 @router.message()
@@ -484,14 +488,14 @@ async def handle_unknown_message(message: Message, state: FSMContext):
 
 async def _poll_calculation_result(bot: Bot, redis_client: RedisClient, calculation_id: str, user_id: int, status_message_id: int, max_attempts: int = 60, interval: float = 2.0):
     """
-    Poll for calculation result and notify user by editing status message.
+    Poll for calculation result and notify user by deleting status message and sending new one with keyboard.
 
     Args:
         bot: Telegram Bot instance
         redis_client: Redis client
         calculation_id: Calculation ID
         user_id: Telegram user ID
-        status_message_id: Message ID to edit
+        status_message_id: Message ID to delete
         max_attempts: Maximum number of polling attempts
         interval: Interval between checks in seconds
     """
