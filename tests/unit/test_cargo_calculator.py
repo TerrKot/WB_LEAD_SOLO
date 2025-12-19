@@ -228,3 +228,4 @@ class TestCargoCalculator:
         assert result["cargo_cost_usd"]["cost_per_kg_usd"] is not None
         assert result["cargo_cost_rub"]["cost_per_kg_rub"] is not None
 
+

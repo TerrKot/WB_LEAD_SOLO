@@ -1,6 +1,7 @@
 """Start command handler."""
 import uuid
 import asyncio
+import json
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
@@ -11,7 +12,7 @@ from aiogram import Bot
 import structlog
 
 from apps.bot_service.clients.redis import RedisClient
-from apps.bot_service.clients.database import DatabaseClient
+from apps.bot_service.clients.database import DatabaseClient, User
 from apps.bot_service.services.input_parser import InputParser
 from apps.bot_service.services.wb_parser import WBParserService
 from apps.bot_service.services.exchange_rate_service import ExchangeRateService
@@ -71,12 +72,126 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Get main persistent keyboard with 'Новый запрос' button."""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Новый запрос")]
+            [KeyboardButton(text="🔄 Новый запрос")]
         ],
         resize_keyboard=True,
         persistent=True
     )
     return keyboard
+
+
+# Статусы для ротации во время получения данных о товаре
+PRODUCT_FETCH_STATUSES = [
+    "🔍 Получаю данные о товаре...",
+    "📡 Запрашиваю информацию с Wildberries...",
+    "🔎 Ищу товар по артикулу...",
+    "📦 Загружаю характеристики товара...",
+    "🌐 Подключаюсь к API Wildberries...",
+    "📊 Обрабатываю данные о товаре...",
+    "🔍 Анализирую карточку товара...",
+    "⏳ Получаю информацию о товаре..."
+]
+
+# Статусы для ротации во время экспресс-расчёта
+CALCULATION_STATUSES = [
+    "⏳ Начинаю экспресс-расчёт...",
+    "🔢 Проверяю обязательные поля...",
+    "🤖 Подбираю код ТН ВЭД...",
+    "🔍 Проверяю красную зону ТН ВЭД...",
+    "🟠 Анализирую оранжевую зону...",
+    "💰 Рассчитываю удельную ценность...",
+    "📊 Формирую экспресс-оценку...",
+    "⚙️ Обрабатываю данные расчёта...",
+    "🔬 Проверяю характеристики товара...",
+    "📈 Вычисляю параметры логистики..."
+]
+
+# Статусы для ротации во время подробного расчёта
+DETAILED_CALCULATION_STATUSES = [
+    "⏳ Запущен подробный расчёт...",
+    "📊 Рассчитываю стоимость карго...",
+    "🚚 Вычисляю стоимость белой логистики...",
+    "💱 Получаю актуальные курсы валют...",
+    "📦 Рассчитываю количество товара...",
+    "💰 Вычисляю пошлины и НДС...",
+    "📈 Сравниваю варианты доставки...",
+    "🔢 Обрабатываю параметры расчёта...",
+    "⚙️ Формирую детальный отчёт...",
+    "📋 Подготавливаю результаты..."
+]
+
+
+async def rotate_status_messages(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    statuses: list[str],
+    stop_event: asyncio.Event,
+    interval: float = 5.0,
+    calculation_id: str = None,
+    redis_client: RedisClient = None
+):
+    """
+    Ротация статусных сообщений каждые N секунд.
+    
+    Args:
+        bot: Telegram Bot instance
+        chat_id: Chat ID
+        message_id: Message ID to edit
+        statuses: List of status messages to rotate
+        stop_event: Event to stop rotation
+        interval: Interval between status changes in seconds
+        calculation_id: Calculation ID for Redis stop flag check (optional)
+        redis_client: Redis client for stop flag check (optional)
+    """
+    status_index = 1  # Начинаем со второго статуса, первый уже показан
+    max_attempts = 200  # Максимум 200 обновлений (1000 секунд = ~16 минут при 5 сек)
+    
+    while not stop_event.is_set() and status_index < max_attempts:
+        try:
+            # Проверяем флаг остановки в Redis, если передан calculation_id
+            if calculation_id and redis_client:
+                rotation_stop_key = f"calculation:{calculation_id}:rotation_stop_event"
+                stop_flag = await redis_client.redis.get(rotation_stop_key)
+                if stop_flag == b"stop":
+                    break
+            
+            # Ждём interval секунд или пока не будет установлен stop_event
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                break  # Если событие установлено, выходим
+            except asyncio.TimeoutError:
+                # Таймаут прошёл, обновляем статус
+                pass
+            
+            # Проверяем ещё раз после ожидания
+            if stop_event.is_set():
+                break
+            
+            if calculation_id and redis_client:
+                rotation_stop_key = f"calculation:{calculation_id}:rotation_stop_event"
+                stop_flag = await redis_client.redis.get(rotation_stop_key)
+                if stop_flag == b"stop":
+                    break
+            
+            # Обновляем статус
+            current_status = statuses[status_index % len(statuses)]
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=current_status
+            )
+            status_index += 1
+                
+        except Exception as e:
+            # Если сообщение уже удалено или произошла ошибка, прекращаем ротацию
+            logger.warning(
+                "status_rotation_error",
+                chat_id=chat_id,
+                message_id=message_id,
+                error=str(e)
+            )
+            break
 
 
 async def handle_start_logic(message: Message, state: FSMContext):
@@ -90,7 +205,10 @@ async def handle_start_logic(message: Message, state: FSMContext):
     
     if not redis_client:
         logger.error("redis_client_not_available", user_id=user_id)
-        await message.answer("Ошибка: сервис временно недоступен. Попробуйте позже.")
+        await message.answer(
+            "Ошибка: сервис временно недоступен. Попробуйте позже.",
+            reply_markup=get_main_keyboard()
+        )
         return
     
     # Save or update user data in database
@@ -167,8 +285,10 @@ async def start_express_calculation(message: Message, redis_client: RedisClient,
     await state.set_state(ExpressCalculationStates.waiting_for_article)
     await state.update_data(calculation_id=calculation_id)
     
-    # Request article input (keyboard removed - using bot menu instead)
-    await message.answer("Введите артикул WB или ссылку на карточку товара:")
+    # Request article input without keyboard
+    await message.answer(
+        "Введите артикул WB или ссылку на карточку товара:"
+    )
     
     logger.info(
         "express_calculation_started",
@@ -211,7 +331,22 @@ async def handle_agreement_accepted(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             logger.warning("user_agreement_save_failed", user_id=user_id, error=str(e))
     
-    await callback.answer("Соглашение принято")
+    # Edit message to remove keyboard and show acceptance confirmation
+    try:
+        await callback.message.edit_text(
+            "✅ Соглашение принято!\n\nТеперь вы можете использовать бота для расчётов.",
+            reply_markup=None
+        )
+    except Exception as e:
+        logger.warning("failed_to_edit_agreement_message", user_id=user_id, error=str(e))
+        # If edit fails, try to delete the message
+        try:
+            await callback.message.delete()
+        except Exception as delete_error:
+            logger.warning("failed_to_delete_agreement_message", user_id=user_id, error=str(delete_error))
+    
+    # Show notification
+    await callback.answer("✅ Соглашение принято!", show_alert=False)
     
     # Start express calculation
     await start_express_calculation(callback.message, redis_client, user_id, state)
@@ -236,6 +371,12 @@ async def handle_article_input(message: Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text or ""
     
+    # Check if user clicked "Новый запрос" button - redirect to new request handler
+    if text.strip() in ("Новый запрос", "🔄 Новый запрос"):
+        logger.info("new_request_button_clicked_from_article_input", user_id=user_id)
+        await handle_start_logic(message, state)
+        return
+    
     logger.info(
         "article_input_received",
         user_id=user_id,
@@ -249,7 +390,10 @@ async def handle_article_input(message: Message, state: FSMContext):
     if not redis_client:
         log_event("redis_unavailable", user_id=user_id, level="error")
         error_message = ErrorHandler.get_user_message_for_redis_error("unavailable")
-        await message.answer(error_message)
+        await message.answer(
+            error_message,
+            reply_markup=get_main_keyboard()
+        )
         return
     
     # Get calculation_id from state
@@ -320,7 +464,9 @@ async def handle_article_input(message: Message, state: FSMContext):
             "❌ Не удалось извлечь артикул из введённых данных.\n\n"
             "Пожалуйста, введите:\n"
             "• Артикул WB (например: 154345562)\n"
-            "• Или ссылку на карточку товара (например: https://www.wildberries.ru/catalog/154345562/detail.aspx)"
+            "• Или ссылку на карточку товара (например: https://www.wildberries.ru/catalog/154345562/detail.aspx)",
+            disable_web_page_preview=True,
+            reply_markup=get_main_keyboard()
         )
         logger.warning("article_extraction_failed", user_id=user_id, text_length=len(text))
         return
@@ -330,6 +476,22 @@ async def handle_article_input(message: Message, state: FSMContext):
     # Send first status message (product info) - without keyboard as it will be edited
     product_info_message = await message.answer("🔍 Получаю данные о товаре...")
     product_info_message_id = product_info_message.message_id
+    
+    # Запускаем ротацию статусов для получения данных о товаре
+    product_fetch_stop_event = asyncio.Event()
+    bot = get_bot()
+    product_fetch_task = asyncio.create_task(
+        rotate_status_messages(
+            bot=bot,
+            chat_id=user_id,
+            message_id=product_info_message_id,
+            statuses=PRODUCT_FETCH_STATUSES,
+            stop_event=product_fetch_stop_event,
+            interval=5.0,
+            calculation_id=None,
+            redis_client=None
+        )
+    )
     
     wb_parser = WBParserService()
     
@@ -346,6 +508,13 @@ async def handle_article_input(message: Message, state: FSMContext):
             error_type=error_type,
             error=str(e)[:200]
         )
+        # Останавливаем ротацию статусов
+        product_fetch_stop_event.set()
+        try:
+            await product_fetch_task
+        except Exception:
+            pass
+        
         # Edit product info message with user-friendly error
         error_message = ErrorHandler.get_user_message_for_wb_error(error_type, article_id)
         await message.bot.edit_message_text(
@@ -353,9 +522,23 @@ async def handle_article_input(message: Message, state: FSMContext):
             message_id=product_info_message_id,
             text=error_message
         )
+        # Clear FSM state to allow new request
+        await state.clear()
+        # Send reply keyboard for new request
+        await message.answer(
+            "💡 Используйте кнопку ниже для нового запроса",
+            reply_markup=get_main_keyboard()
+        )
         return
     
     if not product_data:
+        # Останавливаем ротацию статусов
+        product_fetch_stop_event.set()
+        try:
+            await product_fetch_task
+        except Exception:
+            pass
+        
         # Edit product info message with not found
         error_message = ErrorHandler.get_user_message_for_wb_error("not_found", article_id)
         await message.bot.edit_message_text(
@@ -370,20 +553,192 @@ async def handle_article_input(message: Message, state: FSMContext):
             level="warning",
             article_id=article_id
         )
+        # Clear FSM state to allow new request
+        await state.clear()
+        # Send reply keyboard for new request
+        await message.answer(
+            "💡 Используйте кнопку ниже для нового запроса",
+            reply_markup=get_main_keyboard()
+        )
         return
+    
+    # Останавливаем ротацию статусов получения товара
+    product_fetch_stop_event.set()
+    try:
+        await product_fetch_task
+    except Exception:
+        pass
     
     # Edit product info message with found product data
     product_name = wb_parser.get_product_name(product_data) or "Не указано"
     product_price = wb_parser.get_product_price(product_data)
     price_rub = f"{product_price / 100:.2f} ₽" if product_price else "Не указана"
     
+    # Fetch card_data and category_data for additional info (габариты, категория, подкатегория)
+    card_data = None
+    category_data = None
+    
+    try:
+        # Fetch card data from basket API
+        logger.info(
+            "fetching_card_data_for_product_info",
+            calculation_id=calculation_id,
+            article_id=article_id
+        )
+        card_data = await wb_parser.fetch_product_card_data(article_id)
+        
+        logger.info(
+            "card_data_fetched",
+            calculation_id=calculation_id,
+            article_id=article_id,
+            has_card_data=card_data is not None,
+            card_data_keys=list(card_data.keys()) if card_data else []
+        )
+        
+        if card_data:
+            # Extract subject_id from card data for category API
+            # Try different possible locations for subject_id
+            subject_id = None
+            if "data" in card_data and isinstance(card_data["data"], dict):
+                subject_id = card_data["data"].get("subject_id")
+            elif "subject_id" in card_data:
+                subject_id = card_data.get("subject_id")
+            
+            logger.info(
+                "subject_id_extracted",
+                calculation_id=calculation_id,
+                article_id=article_id,
+                subject_id=subject_id
+            )
+            
+            # Fetch category data
+            if subject_id:
+                category_data = await wb_parser.fetch_product_category_data(article_id, subject_id)
+            else:
+                # Try without subject_id
+                category_data = await wb_parser.fetch_product_category_data(article_id, None)
+            
+            logger.info(
+                "category_data_fetched",
+                calculation_id=calculation_id,
+                article_id=article_id,
+                has_category_data=category_data is not None,
+                category_data=category_data
+            )
+    except Exception as e:
+        logger.warning(
+            "card_category_data_fetch_error_in_handler",
+            calculation_id=calculation_id,
+            article_id=article_id,
+            error=str(e),
+            error_class=type(e).__name__
+        )
+        # Continue without card_data/category_data - will show basic info only
+    
+    # Get review rating and feedbacks count
+    review_rating = wb_parser.get_product_review_rating(product_data)
+    feedbacks_count = wb_parser.get_product_feedbacks(product_data)
+    
+    # Build message text
+    message_lines = [
+        "✅ Товар найден!\n",
+        f"Название: {product_name}",
+        f"Цена: {price_rub}",
+        f"Артикул: {article_id}"
+    ]
+    
+    # Add review rating and feedbacks if available
+    if review_rating is not None:
+        message_lines.append(f"⭐ Рейтинг: {review_rating:.1f}")
+    if feedbacks_count is not None:
+        message_lines.append(f"💬 Отзывов: {feedbacks_count}")
+    
+    # Add category and subcategory if available
+    # Show category even if only type_name or only category_name is available
+    if category_data:
+        type_name = category_data.get("type_name")
+        category_name = category_data.get("category_name")
+        logger.info(
+            "adding_category_info",
+            calculation_id=calculation_id,
+            type_name=type_name,
+            category_name=category_name,
+            category_data=category_data
+        )
+        if type_name:
+            message_lines.append(f"Категория: {type_name}")
+        if category_name:
+            message_lines.append(f"Подкатегория: {category_name}")
+    else:
+        logger.warning(
+            "category_data_not_available",
+            calculation_id=calculation_id,
+            article_id=article_id
+        )
+    
+    # Add package dimensions if available
+    if card_data:
+        # Log full card_data structure for debugging (first level only)
+        logger.info(
+            "card_data_structure_for_dimensions",
+            calculation_id=calculation_id,
+            article_id=article_id,
+            card_data_keys=list(card_data.keys())[:30] if card_data else [],
+            has_options="options" in card_data,
+            has_data="data" in card_data,
+            data_type=type(card_data.get("data")).__name__ if "data" in card_data else "None",
+            data_keys=list(card_data.get("data", {}).keys())[:30] if isinstance(card_data.get("data"), dict) else []
+        )
+        
+        # If data section exists, log its options
+        if "data" in card_data and isinstance(card_data.get("data"), dict):
+            data_section = card_data["data"]
+            if "options" in data_section:
+                options_list = data_section.get("options", [])
+                if isinstance(options_list, list):
+                    option_names = [opt.get("name", "") if isinstance(opt, dict) else str(opt) for opt in options_list[:20]]
+                    logger.info(
+                        "options_found_in_data_section",
+                        calculation_id=calculation_id,
+                        article_id=article_id,
+                        options_count=len(options_list),
+                        option_names=option_names
+                    )
+        
+        dimensions = wb_parser.get_package_dimensions(card_data)
+        
+        logger.info(
+            "package_dimensions_extracted",
+            calculation_id=calculation_id,
+            article_id=article_id,
+            dimensions=dimensions,
+            has_dimensions=dimensions is not None
+        )
+        if dimensions:
+            length = dimensions.get("length")
+            width = dimensions.get("width")
+            height = dimensions.get("height")
+            if length and width and height:
+                message_lines.append(f"Габариты: {length}×{width}×{height} см")
+        else:
+            logger.warning(
+                "dimensions_not_found_in_card_data",
+                calculation_id=calculation_id,
+                article_id=article_id,
+                card_data_keys=list(card_data.keys())[:30] if card_data else [],
+                card_data_data_keys=list(card_data.get("data", {}).keys())[:30] if isinstance(card_data.get("data"), dict) else []
+            )
+    else:
+        logger.warning(
+            "card_data_not_available",
+            calculation_id=calculation_id,
+            article_id=article_id
+        )
+    
     await message.bot.edit_message_text(
         chat_id=user_id,
         message_id=product_info_message_id,
-        text=f"✅ Товар найден!\n\n"
-             f"📦 Название: {product_name}\n"
-             f"💰 Цена: {price_rub}\n"
-             f"🔢 Артикул: {article_id}"
+        text="\n".join(message_lines)
     )
     
     # Save product data to calculation
@@ -405,6 +760,21 @@ async def handle_article_input(message: Message, state: FSMContext):
     # Save product data temporarily (will be used by worker)
     await redis_client.set_calculation_product_data(calculation_id, product_data, ttl=3600)
     
+    # Save card_data and category_data to Redis if available (to avoid duplicate requests in worker)
+    if card_data:
+        await redis_client.redis.setex(
+            f"calculation:{calculation_id}:card_data",
+            3600,  # 1 hour TTL
+            json.dumps(card_data)
+        )
+    
+    if category_data:
+        await redis_client.redis.setex(
+            f"calculation:{calculation_id}:category_data",
+            3600,  # 1 hour TTL
+            json.dumps(category_data)
+        )
+    
     # Push to calculation queue for further processing
     await redis_client.push_calculation(calculation_id, calculation_data)
     
@@ -414,6 +784,21 @@ async def handle_article_input(message: Message, state: FSMContext):
     # Send second status message (calculation status) - without keyboard as it will be edited
     calculation_status_message = await message.answer("⏳ Начинаю экспресс-расчёт...")
     calculation_status_message_id = calculation_status_message.message_id
+    
+    # Запускаем ротацию статусов для экспресс-расчёта
+    calculation_stop_event = asyncio.Event()
+    calculation_rotation_task = asyncio.create_task(
+        rotate_status_messages(
+            bot=bot,
+            chat_id=user_id,
+            message_id=calculation_status_message_id,
+            statuses=CALCULATION_STATUSES,
+            stop_event=calculation_stop_event,
+            interval=5.0,
+            calculation_id=calculation_id,
+            redis_client=redis_client
+        )
+    )
     
     # Save calculation status message ID to Redis for later editing
     await redis_client.redis.setex(
@@ -436,7 +821,7 @@ async def handle_article_input(message: Message, state: FSMContext):
         asyncio.create_task(_poll_calculation_result(bot, redis_client, calculation_id, user_id, calculation_status_message_id))
 
 
-@router.message(F.text == "Новый запрос")
+@router.message(F.text.in_(["Новый запрос", "🔄 Новый запрос"]))
 async def handle_new_request_button(message: Message, state: FSMContext):
     """Handle 'Новый запрос' button click - same as /newrequest command."""
     await handle_start_logic(message, state)
@@ -482,7 +867,8 @@ async def handle_unknown_message(message: Message, state: FSMContext):
     
     # Otherwise, suggest to start
     await message.answer(
-        "Для начала работы отправьте команду /start или используйте команду /newrequest из меню бота."
+        "Для начала работы отправьте команду /start или используйте команду /newrequest из меню бота.",
+        reply_markup=get_main_keyboard()
     )
 
 
@@ -534,6 +920,59 @@ async def _poll_calculation_result(bot: Bot, redis_client: RedisClient, calculat
     )
 
 
+@router.callback_query(F.data == "new_request")
+async def handle_new_request_callback(callback: CallbackQuery, state: FSMContext):
+    """Handle 'Новый запрос' inline button click - same as /newrequest command."""
+    await callback.answer()
+    user_id = callback.from_user.id
+    
+    # Get redis_client
+    redis_client: RedisClient = get_redis_client()
+    if not redis_client:
+        logger.error("redis_client_not_available", user_id=user_id)
+        await callback.message.answer(
+            "Ошибка: сервис временно недоступен. Попробуйте позже.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
+    # Check if user already accepted agreement (in Redis)
+    agreement_accepted = await redis_client.is_user_agreement_accepted(user_id)
+    
+    # If not in Redis, check database
+    if not agreement_accepted:
+        db_client: DatabaseClient = get_db_client()
+        if db_client:
+            try:
+                from sqlalchemy import select
+                session = await db_client.get_session()
+                try:
+                    result = await session.execute(
+                        select(User).where(User.user_id == user_id)
+                    )
+                    user = result.scalar_one_or_none()
+                    if user and user.agreement_accepted:
+                        # User accepted agreement in DB, restore it in Redis
+                        await redis_client.set_user_agreement_accepted(user_id)
+                        agreement_accepted = True
+                        logger.info("agreement_restored_from_db", user_id=user_id)
+                finally:
+                    await session.close()
+            except Exception as e:
+                logger.warning("db_agreement_check_failed", user_id=user_id, error=str(e))
+    
+    # If user has agreement accepted, start express calculation directly
+    if agreement_accepted:
+        await start_express_calculation(callback.message, redis_client, user_id, state)
+    else:
+        # If no agreement found, use standard start logic
+        if not hasattr(callback.message, 'text'):
+            callback.message.text = "/start"
+        await handle_start_logic(callback.message, state)
+    
+    logger.info("new_request_callback_clicked", user_id=user_id, agreement_accepted=agreement_accepted)
+
+
 @router.callback_query(F.data.startswith("detailed_calculation:"))
 async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext):
     """Handle detailed calculation button click - show parameters screen."""
@@ -549,6 +988,12 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
         logger.error("redis_client_not_available", user_id=user_id)
         await callback.answer("Ошибка: сервис временно недоступен.", show_alert=True)
         return
+    
+    # Remove keyboard from express calculation result message
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception as e:
+        logger.warning("failed_to_remove_detailed_calculation_button", user_id=user_id, error=str(e))
     
     # Get calculation result
     result = await redis_client.get_calculation_result(calculation_id)
@@ -566,6 +1011,10 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
         if not product_data:
             logger.error("product_data_not_found", user_id=user_id, calculation_id=calculation_id)
             await callback.answer("Ошибка: данные товара не найдены.", show_alert=True)
+            await callback.message.answer(
+                "Ошибка: данные товара не найдены.",
+                reply_markup=get_main_keyboard()
+            )
             return
     
     # Get article_id from product_data (id field in normalized product_data)
@@ -591,7 +1040,44 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
     purchase_price_cny = (price_rub / 4) / rub_cny_rate  # Расчётная закупочная цена в CNY = (цена WB / 4) / курс RUB/CNY
     
     weight = wb_parser.get_product_weight(product_data) or 0
-    volume_liters = wb_parser.get_product_volume(product_data) or 0
+    
+    # Volume priority: 1) Basket API (card_data), 2) WB API v4 (product_data), 3) GPT fallback
+    # Try to get card_data from Redis first
+    card_data_json = await redis_client.redis.get(f"calculation:{calculation_id}:card_data")
+    volume_liters = 0
+    
+    # Priority 1: Try Basket API (card_data)
+    if card_data_json:
+        try:
+            card_data = json.loads(card_data_json)
+            package_volume = wb_parser.calculate_package_volume(card_data)
+            if package_volume and package_volume > 0:
+                volume_liters = package_volume
+                logger.info(
+                    "volume_from_card_data",
+                    calculation_id=calculation_id,
+                    volume_liters=volume_liters
+                )
+        except Exception as e:
+            logger.warning(
+                "failed_to_get_volume_from_card_data",
+                calculation_id=calculation_id,
+                error=str(e)
+            )
+    
+    # Priority 2: Fallback to WB API v4 (product_data) if Basket API didn't provide volume
+    if not volume_liters or volume_liters == 0:
+        volume_from_product = wb_parser.get_product_volume(product_data)
+        if volume_from_product and volume_from_product > 0:
+            volume_liters = volume_from_product
+            logger.info(
+                "volume_from_wb_api_v4_fallback",
+                calculation_id=calculation_id,
+                volume_liters=volume_liters
+            )
+    
+    # Priority 3: If still no volume, try GPT (but this is async, so we'll skip for now in handler)
+    # Volume will be requested via GPT in calculation_worker if needed
     
     # Convert volume from liters to m³ (1 liter = 0.001 m³)
     volume_m3 = volume_liters * 0.001 if volume_liters else 0
@@ -635,20 +1121,21 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
         ]
     ])
     
-    # Save current parameters to state for later use
+    # Send new message instead of editing (to preserve express calculation result)
+    new_message = await callback.message.answer(
+        text=message_text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+    
+    # Save current parameters to state for later use, including message_id
     await state.update_data(
         calculation_id=calculation_id,
         current_weight=weight,
         current_volume=volume_m3,
         current_purchase_price_cny=purchase_price_cny,
-        article_id=article_id
-    )
-    
-    # Send new message instead of editing (to preserve express calculation result)
-    await callback.message.answer(
-        text=message_text,
-        parse_mode="HTML",
-        reply_markup=keyboard
+        article_id=article_id,
+        parameters_message_id=new_message.message_id
     )
     
     await callback.answer()
@@ -828,6 +1315,10 @@ async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
     product_data = original_result.get("product_data")
     if not product_data:
         await callback.answer("Ошибка: данные товара не найдены.", show_alert=True)
+        await callback.message.answer(
+            "Ошибка: данные товара не найдены.",
+            reply_markup=get_main_keyboard()
+        )
         return
     
     # Get TN VED data
@@ -835,13 +1326,41 @@ async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
     duty_type = original_result.get("duty_type")
     duty_rate = original_result.get("duty_rate")
     vat_rate = original_result.get("vat_rate")
+    duty_minimum = original_result.get("duty_minimum")  # Приписка о минимальной пошлине
     
+    # Validate TN VED data: code must exist, duty_rate must be > 0 (or exempt)
     if not tn_ved_code or not duty_type or duty_rate is None or vat_rate is None:
         await callback.answer("Ошибка: данные ТН ВЭД не найдены.", show_alert=True)
         return
     
+    # Check if duty_rate is valid
+    # If duty_rate is 0 and duty_type is not "exempt", code might not exist or be invalid
+    if duty_rate <= 0 and duty_type != "exempt":
+        await callback.answer(
+            "Ошибка: не удалось определить пошлину для данного кода ТН ВЭД. "
+            "Возможно, код не существует или неверен. Попробуйте другой товар.",
+            show_alert=True
+        )
+        logger.warning(
+            "invalid_tnved_code_for_detailed_calculation",
+            user_id=user_id,
+            calculation_id=original_calculation_id,
+            tn_ved_code=tn_ved_code,
+            duty_rate=duty_rate,
+            duty_type=duty_type
+        )
+        return
+    
     # Use the same calculation_id for detailed calculation (it's a continuation of express)
     detailed_calculation_id = original_calculation_id
+    
+    # Delete old express calculation result to prevent it from being sent instead of detailed result
+    old_result_key = f"calculation:{detailed_calculation_id}:result"
+    await redis_client.redis.delete(old_result_key)
+    
+    # Clear notification_sent flag to allow new result notification
+    notification_sent_key = f"calculation:{detailed_calculation_id}:notification_sent"
+    await redis_client.redis.delete(notification_sent_key)
     
     # Save product data for detailed calculation (update existing)
     await redis_client.set_calculation_product_data(detailed_calculation_id, product_data)
@@ -858,13 +1377,10 @@ async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
             "tn_ved_code": tn_ved_code,
             "duty_type": duty_type,
             "duty_rate": duty_rate,
-            "vat_rate": vat_rate
+            "vat_rate": vat_rate,
+            "duty_minimum": duty_minimum  # Приписка о минимальной пошлине
         }
     }
-    
-    # Clear notification_sent flag to allow new result notification
-    notification_sent_key = f"calculation:{detailed_calculation_id}:notification_sent"
-    await redis_client.redis.delete(notification_sent_key)
     
     # Push detailed calculation to queue
     await redis_client.push_calculation(detailed_calculation_id, detailed_calculation_data)
@@ -875,9 +1391,31 @@ async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
     # Set user's current calculation
     await redis_client.set_user_current_calculation(user_id, detailed_calculation_id)
     
+    # Remove keyboard from parameters message
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception as e:
+        logger.warning("failed_to_remove_parameters_keyboard", user_id=user_id, error=str(e))
+    
     # Send status message
     status_message = await callback.message.answer("⏳ Запущен подробный расчёт...")
     status_message_id = status_message.message_id
+    
+    # Запускаем ротацию статусов для подробного расчёта
+    detailed_calculation_stop_event = asyncio.Event()
+    bot = get_bot()
+    detailed_calculation_rotation_task = asyncio.create_task(
+        rotate_status_messages(
+            bot=bot,
+            chat_id=user_id,
+            message_id=status_message_id,
+            statuses=DETAILED_CALCULATION_STATUSES,
+            stop_event=detailed_calculation_stop_event,
+            interval=5.0,
+            calculation_id=detailed_calculation_id,
+            redis_client=redis_client
+        )
+    )
     
     await callback.answer("Подробный расчёт запущен")
     
@@ -892,7 +1430,6 @@ async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
     )
     
     # Poll for result
-    bot = get_bot()
     await _poll_calculation_result(
         bot, redis_client, detailed_calculation_id, user_id, status_message_id
     )
@@ -922,11 +1459,25 @@ async def show_parameters_screen(
     # Get product data
     product_data = result.get("product_data")
     if not product_data:
-        await message.answer("Ошибка: данные товара не найдены.")
+        await message.answer(
+            "Ошибка: данные товара не найдены.",
+            reply_markup=get_main_keyboard()
+        )
         return
     
     # Get current state data
     state_data = await state.get_data()
+    
+    # Delete previous parameters message if exists
+    previous_params_message_id = state_data.get("parameters_message_id")
+    if previous_params_message_id:
+        try:
+            await message.bot.delete_message(
+                chat_id=message.chat.id,
+                message_id=previous_params_message_id
+            )
+        except Exception as e:
+            logger.warning("failed_to_delete_previous_parameters_message", user_id=message.from_user.id, error=str(e))
     
     # Extract product information
     wb_parser = WBParserService()
@@ -941,7 +1492,41 @@ async def show_parameters_screen(
     
     volume_m3 = volume_adjusted if volume_adjusted is not None else state_data.get("current_volume")
     if volume_m3 is None:
-        volume_liters = wb_parser.get_product_volume(product_data) or 0
+        # Volume priority: 1) Basket API (card_data), 2) WB API v4 (product_data)
+        # Try to get card_data from Redis first
+        card_data_json = await redis_client.redis.get(f"calculation:{calculation_id}:card_data")
+        volume_liters = 0
+        
+        # Priority 1: Try Basket API (card_data)
+        if card_data_json:
+            try:
+                card_data = json.loads(card_data_json)
+                package_volume = wb_parser.calculate_package_volume(card_data)
+                if package_volume and package_volume > 0:
+                    volume_liters = package_volume
+                    logger.info(
+                        "volume_from_card_data_in_show_parameters",
+                        calculation_id=calculation_id,
+                        volume_liters=volume_liters
+                    )
+            except Exception as e:
+                logger.warning(
+                    "failed_to_get_volume_from_card_data_in_show_parameters",
+                    calculation_id=calculation_id,
+                    error=str(e)
+                )
+        
+        # Priority 2: Fallback to WB API v4 (product_data) if Basket API didn't provide volume
+        if not volume_liters or volume_liters == 0:
+            volume_from_product = wb_parser.get_product_volume(product_data)
+            if volume_from_product and volume_from_product > 0:
+                volume_liters = volume_from_product
+                logger.info(
+                    "volume_from_wb_api_v4_fallback_in_show_parameters",
+                    calculation_id=calculation_id,
+                    volume_liters=volume_liters
+                )
+        
         volume_m3 = volume_liters * 0.001
     else:
         volume_liters = volume_m3 * 1000  # Convert back to liters for display
@@ -995,18 +1580,20 @@ async def show_parameters_screen(
         ]
     ])
     
-    # Update state with current values
+    # Send new parameters message
+    new_message = await message.answer(
+        text=message_text,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+    
+    # Update state with current values and save new message_id
     await state.update_data(
         calculation_id=calculation_id,
         current_weight=weight,
         current_volume=volume_m3,
         current_purchase_price_cny=purchase_price_cny,
-        article_id=article_id
-    )
-    
-    await message.answer(
-        text=message_text,
-        parse_mode="HTML",
-        reply_markup=keyboard
+        article_id=article_id,
+        parameters_message_id=new_message.message_id
     )
 

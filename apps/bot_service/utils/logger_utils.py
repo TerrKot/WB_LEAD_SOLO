@@ -108,3 +108,4 @@ def log_event(
     log_method = getattr(log, level.lower(), log.info)
     log_method(event_type, **sanitized_kwargs)
 
+

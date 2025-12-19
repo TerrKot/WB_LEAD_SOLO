@@ -22,3 +22,4 @@ EXPOSE 8090
 CMD ["python", "apps/bot_service/main.py"]
 
 
+

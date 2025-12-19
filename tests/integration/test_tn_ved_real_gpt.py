@@ -13,8 +13,14 @@ async def test_tn_ved_real_gpt_request():
     """Test real GPT API request for TN VED code selection."""
     gpt_service = GPTService()
     
-    # Real product name
+    # Real product data
     product_name = "Рюкзак городской повседневный для ноутбука"
+    product_data = {
+        "name": product_name,
+        "brand": "TestBrand",
+        "weight": 1.5,
+        "volume": 20
+    }
     
     print("\n" + "="*80)
     print("РЕАЛЬНЫЙ ЗАПРОС К GPT API")
@@ -24,7 +30,7 @@ async def test_tn_ved_real_gpt_request():
     print("="*80 + "\n")
     
     # Make real request
-    result = await gpt_service.get_tn_ved_code(product_name=product_name)
+    result = await gpt_service.get_tn_ved_code(product_data=product_data)
     
     if result:
         print("\n" + "="*80)
@@ -62,10 +68,10 @@ async def test_tn_ved_real_gpt_multiple_products():
     gpt_service = GPTService()
     
     products = [
-        "Рюкзак городской повседневный для ноутбука",
-        "Смартфон Apple iPhone 15",
-        "Одежда детская хлопковая футболка",
-        "Мебель офисная стул вращающийся"
+        {"name": "Рюкзак городской повседневный для ноутбука", "brand": "TestBrand"},
+        {"name": "Смартфон Apple iPhone 15", "brand": "Apple"},
+        {"name": "Одежда детская хлопковая футболка", "brand": "TestBrand"},
+        {"name": "Мебель офисная стул вращающийся", "brand": "TestBrand"}
     ]
     
     print("\n" + "="*80)
@@ -73,16 +79,17 @@ async def test_tn_ved_real_gpt_multiple_products():
     print("="*80)
     
     results = []
-    for product_name in products:
+    for product_data in products:
+        product_name = product_data["name"]
         print(f"\nЗапрос для: {product_name}")
-        result = await gpt_service.get_tn_ved_code(product_name=product_name)
+        result = await gpt_service.get_tn_ved_code(product_data=product_data)
         
         if result:
             print(f"  ✓ Код ТН ВЭД: {result['tn_ved_code']}")
             print(f"  ✓ Тип пошлины: {result['duty_type']}")
             print(f"  ✓ Пошлина: {result['duty_rate']}%")
             print(f"  ✓ НДС: {result['vat_rate']}%")
-            results.append((product_name, result))
+            results.append((product_data["name"], result))
         else:
             print(f"  ✗ Ошибка: GPT API не вернул результат")
     

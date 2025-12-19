@@ -299,7 +299,7 @@ class TestGPTService:
             mock_call.return_value = sample_tn_ved_response
             mock_parse.return_value = sample_duty_info
             
-            result = await gpt_service.get_tn_ved_code("Рюкзак городской")
+            result = await gpt_service.get_tn_ved_code({"name": "Рюкзак городской"})
             
             assert result is not None
             assert result["tn_ved_code"] == "4202120000"
@@ -317,7 +317,7 @@ class TestGPTService:
             mock_call.return_value = sample_tn_ved_response_with_markdown
             mock_parse.return_value = sample_duty_info
             
-            result = await gpt_service.get_tn_ved_code("Рюкзак городской")
+            result = await gpt_service.get_tn_ved_code({"name": "Рюкзак городской"})
             
             assert result is not None
             assert result["tn_ved_code"] == "4202120000"
@@ -333,13 +333,13 @@ class TestGPTService:
             mock_call.return_value = sample_tn_ved_response
             mock_parse.return_value = sample_duty_info
             
-            result = await gpt_service.get_tn_ved_code(
-                product_name="Рюкзак",
-                product_description="Городской рюкзак для ноутбука",
-                product_brand="TestBrand",
-                product_weight=1.5,
-                product_volume=2
-            )
+            result = await gpt_service.get_tn_ved_code({
+                "name": "Рюкзак",
+                "description": "Городской рюкзак для ноутбука",
+                "brand": "TestBrand",
+                "weight": 1.5,
+                "volume": 2
+            })
             
             assert result is not None
             assert result["tn_ved_code"] == "4202120000"
@@ -356,7 +356,7 @@ class TestGPTService:
         with patch.object(gpt_service, "_call_gpt_api", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = None
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is None
 
@@ -376,7 +376,7 @@ class TestGPTService:
         with patch.object(gpt_service, "_call_gpt_api", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = invalid_response
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is None
 
@@ -396,7 +396,7 @@ class TestGPTService:
         with patch.object(gpt_service, "_call_gpt_api", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = incomplete_response
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is None
 
@@ -416,7 +416,7 @@ class TestGPTService:
         with patch.object(gpt_service, "_call_gpt_api", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = invalid_response
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is None
 
@@ -436,7 +436,7 @@ class TestGPTService:
         with patch.object(gpt_service, "_call_gpt_api", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = invalid_response
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is None
 
@@ -456,7 +456,7 @@ class TestGPTService:
         with patch.object(gpt_service, "_call_gpt_api", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = invalid_response
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is None
 
@@ -483,7 +483,7 @@ class TestGPTService:
             mock_call.return_value = exempt_response
             mock_parse.return_value = exempt_duty_info
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is not None
             assert result["duty_type"] == "exempt"
@@ -513,7 +513,7 @@ class TestGPTService:
             mock_call.return_value = combined_response
             mock_parse.return_value = combined_duty_info
             
-            result = await gpt_service.get_tn_ved_code("Тестовый товар")
+            result = await gpt_service.get_tn_ved_code({"name": "Тестовый товар"})
             
             assert result is not None
             assert result["duty_type"] == "combined"

@@ -1,6 +1,7 @@
 """Service for notifying users about calculation results."""
 import asyncio
 import json
+import re
 from typing import Optional, Dict, Any
 import structlog
 
@@ -11,11 +12,60 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 logger = structlog.get_logger()
 
 
+def clean_html_for_telegram(text: str) -> str:
+    """
+    Clean HTML text to be compatible with Telegram HTML parse mode.
+    
+    Telegram HTML supports only: <b>, <strong>, <i>, <em>, <u>, <ins>, <s>, <strike>, <del>,
+    <span>, <tg-spoiler>, <a>, <code>, <pre>.
+    
+    Replaces unsupported tags like <br>, <ul>, <li>, <ol>, <div>, <p> with appropriate text formatting.
+    
+    Args:
+        text: HTML text to clean
+        
+    Returns:
+        Cleaned HTML text compatible with Telegram
+    """
+    if not text:
+        return text
+    
+    # Replace <br>, <br/>, <br /> with newlines
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    
+    # Convert <li> items to bullet points (•)
+    # First, replace <li> with newline + bullet, then remove <ul>/<ol> tags
+    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'</li>', '', text, flags=re.IGNORECASE)
+    
+    # Remove list container tags but keep content
+    text = re.sub(r'</?ul[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?ol[^>]*>', '\n', text, flags=re.IGNORECASE)
+    
+    # Remove other unsupported block-level tags but keep their content
+    # Note: <span> is supported by Telegram, so we don't remove it
+    # Remove opening and closing tags for: div, p, h1-h6, etc.
+    unsupported_tags = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article', 'header', 'footer', 'nav']
+    for tag in unsupported_tags:
+        # Remove opening tags
+        text = re.sub(rf'<{tag}[^>]*>', '', text, flags=re.IGNORECASE)
+        # Remove closing tags
+        text = re.sub(rf'</{tag}>', '', text, flags=re.IGNORECASE)
+    
+    # Clean up multiple consecutive newlines (more than 2)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Strip leading/trailing whitespace
+    text = text.strip()
+    
+    return text
+
+
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Get main persistent keyboard with 'Новый запрос' button."""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Новый запрос")]
+            [KeyboardButton(text="🔄 Новый запрос")]
         ],
         resize_keyboard=True,
         persistent=True
@@ -50,41 +100,77 @@ class ResultNotifier:
             True if result was found and sent, False otherwise
         """
         try:
+            # Early check: if notification was already sent, don't process again
+            notification_sent_key = f"calculation:{calculation_id}:notification_sent"
+            notification_sent = await self.redis.redis.get(notification_sent_key)
+            if notification_sent:
+                # Result was already sent, don't send again
+                return True
+            
             # Get calculation status
             status = await self.redis.get_calculation_status(calculation_id)
+            
+            # Don't send results if calculation is in progress (pending or processing)
+            # This prevents sending old express results when detailed calculation is starting
+            if status in ("pending", "processing"):
+                return False
             
             if status in ("blocked", "completed", "failed", "orange_zone"):
                 # Get result
                 result = await self.redis.get_calculation_result(calculation_id)
                 
                 if result:
-                    # Check if result was already sent to prevent duplicate messages
-                    notification_sent_key = f"calculation:{calculation_id}:notification_sent"
-                    notification_sent = await self.redis.redis.get(notification_sent_key)
-                    if notification_sent:
-                        # Result was already sent, don't send again
+                    # Try to atomically set notification flag (SETNX with TTL)
+                    # This ensures only one process can send the notification
+                    set_result = await self.redis.redis.set(
+                        notification_sent_key,
+                        "1",
+                        ex=86400,  # 24 hours TTL
+                        nx=True  # Only set if not exists (atomic operation)
+                    )
+                    
+                    if not set_result:
+                        # Another process already set the flag, don't send
                         return True
                     
+                    # We successfully set the flag, so we can send the message
                     await self._send_result_message(user_id, status_message_id, result)
-                    # Mark as sent to prevent duplicate notifications
-                    await self.redis.redis.setex(notification_sent_key, 86400, "1")  # 24 hours TTL
                     return True
             
             # Also check for assessment statuses (🟢/🟡/🟠/🔴)
             result = await self.redis.get_calculation_result(calculation_id)
             if result:
+                calculation_type = result.get("calculation_type")
                 assessment_status = result.get("status")
-                if assessment_status in ("🟢", "🟡", "🟠", "🔴"):
-                    # Check if result was already sent to prevent duplicate messages
-                    notification_sent_key = f"calculation:{calculation_id}:notification_sent"
-                    notification_sent = await self.redis.redis.get(notification_sent_key)
-                    if notification_sent:
-                        # Result was already sent, don't send again
+                # Get current status to check if we're waiting for a new calculation
+                current_status = await self.redis.get_calculation_status(calculation_id)
+                
+                # Only send express calculation results if:
+                # 1. This is not a detailed calculation result
+                # 2. Current status is not "pending" (if pending, we're waiting for new result)
+                # 3. Result has assessment status
+                should_send = (
+                    calculation_type != "detailed" and
+                    current_status != "pending" and
+                    assessment_status in ("🟢", "🟡", "🟠", "🔴")
+                )
+                
+                if should_send:
+                    # Try to atomically set notification flag (SETNX with TTL)
+                    # This ensures only one process can send the notification
+                    set_result = await self.redis.redis.set(
+                        notification_sent_key,
+                        "1",
+                        ex=86400,  # 24 hours TTL
+                        nx=True  # Only set if not exists (atomic operation)
+                    )
+                    
+                    if not set_result:
+                        # Another process already set the flag, don't send
                         return True
                     
+                    # We successfully set the flag, so we can send the message
                     await self._send_result_message(user_id, status_message_id, result)
-                    # Mark as sent to prevent duplicate notifications
-                    await self.redis.redis.setex(notification_sent_key, 86400, "1")  # 24 hours TTL
                     return True
             
             return False
@@ -107,6 +193,12 @@ class ResultNotifier:
             result: Calculation result
         """
         status = result.get("status")
+        calculation_id = result.get("calculation_id")
+        
+        # Останавливаем ротацию статусов, если она запущена
+        if calculation_id:
+            rotation_stop_key = f"calculation:{calculation_id}:rotation_stop_event"
+            await self.redis.redis.setex(rotation_stop_key, 60, "stop")  # Устанавливаем флаг остановки
         
         # Check if this is a detailed calculation result
         calculation_type = result.get("calculation_type")
@@ -130,12 +222,14 @@ class ResultNotifier:
         if calculation_type == "detailed":
             # Detailed calculation result
             message_text = result.get("message", "✅ Подробный расчёт завершён")
+            message_text = clean_html_for_telegram(message_text)
             
             await self.bot.send_message(
                 chat_id=user_id,
                 text=message_text,
                 parse_mode="HTML",
-                reply_markup=main_keyboard
+                reply_markup=main_keyboard,
+                disable_web_page_preview=True
             )
             
             logger.info(
@@ -152,11 +246,15 @@ class ResultNotifier:
                 tn_ved_code = result.get("tn_ved_code", "N/A")
                 reason = result.get("red_zone_reason", "Товар попадает в красную зону")
                 message_text = (
-                    f"🔴 <b>Экспресс-расчёт завершён</b>\n\n"
+                    f"🔴 <b>Белая доставка — только после подготовки / смены продукта, с текущей категорией товара белая схема не рекомендована.</b>\n\n"
                     f"Код ТН ВЭД: <code>{tn_ved_code}</code>\n"
                     f"Причина: {reason}\n\n"
-                    f"Товар не может быть доставлен белой логистикой."
+                    f"Товар не может быть доставлен белой логистикой.\n\n"
+                    f"💡 Используйте кнопку ниже для нового запроса"
                 )
+            
+            # Clean HTML to remove unsupported tags like <br>
+            message_text = clean_html_for_telegram(message_text)
             
             await self.bot.send_message(
                 chat_id=user_id,
@@ -175,6 +273,7 @@ class ResultNotifier:
         elif status == "orange_zone" or status == "🟠":
             # Orange zone blocked
             message_text = result.get("message", "🟠 Экспресс-расчёт завершён")
+            message_text = clean_html_for_telegram(message_text)
             
             # Add button for detailed calculation
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -185,22 +284,26 @@ class ResultNotifier:
                         text="📊 Подробный расчёт",
                         callback_data=f"detailed_calculation:{result.get('calculation_id')}"
                     )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Новый запрос",
+                        callback_data="new_request"
+                    )
                 ]
             ])
             
-            # Send message with inline keyboard (inline buttons appear under message)
-            # Reply keyboard will be sent in separate message to ensure it's always visible
+            # Send message with inline keyboard
             await self.bot.send_message(
                 chat_id=user_id,
                 text=message_text,
                 parse_mode="HTML",
                 reply_markup=inline_keyboard
             )
-            
-            # Send separate message with reply keyboard to ensure it's always visible under input
+            # Send reply keyboard in a separate minimal message to ensure it's always visible
             await self.bot.send_message(
                 chat_id=user_id,
-                text="💡 Используйте кнопку ниже для нового запроса",
+                text="\u200B",  # Zero-width space (invisible)
                 reply_markup=main_keyboard
             )
             
@@ -213,6 +316,7 @@ class ResultNotifier:
         elif (status == "completed" or status in ("🟢", "🟡")) and calculation_type != "detailed":
             # Express assessment completed (🟢 or 🟡) - but not detailed calculation
             message_text = result.get("message", "✅ Расчёт завершён")
+            message_text = clean_html_for_telegram(message_text)
             
             # For 🟢 and 🟡, we need to add buttons for detailed calculation
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -225,21 +329,29 @@ class ResultNotifier:
                             text="📊 Подробный расчёт",
                             callback_data=f"detailed_calculation:{result.get('calculation_id')}"
                         )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="🔄 Новый запрос",
+                            callback_data="new_request"
+                        )
                     ]
                 ])
             
-            # If we have inline keyboard, send it first, then reply keyboard separately
+            # Send message with inline keyboard (if available) and reply keyboard
+            # In Telegram, you can't have both in one message, so we'll send reply keyboard separately
             if inline_keyboard:
+                # Send main message with inline keyboard
                 await self.bot.send_message(
                     chat_id=user_id,
                     text=message_text,
                     parse_mode="HTML",
                     reply_markup=inline_keyboard
                 )
-                # Send separate message with reply keyboard to ensure it's always visible
+                # Send reply keyboard in a separate minimal message to ensure it's always visible
                 await self.bot.send_message(
                     chat_id=user_id,
-                    text="💡 Используйте кнопку ниже для нового запроса",
+                    text="\u200B",  # Zero-width space (invisible)
                     reply_markup=main_keyboard
                 )
             else:
@@ -259,9 +371,8 @@ class ResultNotifier:
             )
         
         elif status == "failed":
-            # Calculation failed
-            error_message = result.get("message", "Произошла ошибка при расчёте")
-            message_text = f"❌ {error_message}\n\nПопробуйте начать заново с /start"
+            # Calculation failed - show white status instead of error
+            message_text = "⚪️ Нужно больше данных — данная категория пока не включена в наш реестр и не может быть отработана, доджитесь ближайшего обновления."
             
             await self.bot.send_message(
                 chat_id=user_id,

@@ -1,5 +1,6 @@
 """Service for calculating white logistics costs."""
 from typing import Dict, Any, Optional
+import hashlib
 import structlog
 
 from apps.bot_service.config import config
@@ -63,9 +64,9 @@ class WhiteLogisticsCalculator:
                 "goods_value_cny": float,
                 "goods_value_usd": float,
                 "goods_value_rub": float,
-                "docs_rub": float,
                 "broker_rub": float,
                 "duty_rub": float,
+                "customs_fees_rub": float,
                 "vat_rub": float,
                 "total_rub": float,
                 "cost_per_unit_rub": float,
@@ -100,9 +101,9 @@ class WhiteLogisticsCalculator:
                 "goods_value_cny": 0.0,
                 "goods_value_usd": 0.0,
                 "goods_value_rub": 0.0,
-                "docs_rub": 0.0,
                 "broker_rub": 0.0,
                 "duty_rub": 0.0,
+                "customs_fees_rub": 0.0,
                 "vat_rub": 0.0,
                 "total_rub": 0.0,
                 "cost_per_unit_rub": 0.0,
@@ -110,30 +111,34 @@ class WhiteLogisticsCalculator:
             }
         
         # Base logistics (in USD)
-        # Logistics price: 1850 USD, converted to RUB using exchange rate
+        # Dynamic logistics price: 1800-1900 USD based on product parameters hash
         # Exchange rate in config should be CB rate + 2% (e.g., if CB = 98, then rate = 98 * 1.02 = 99.96)
-        logistics_usd = self.base_price_usd
+        logistics_usd = self._calculate_dynamic_delivery(weight_kg, volume_m3, goods_value_cny)
         logistics_rub = logistics_usd * self.usd_rub
         
         # Goods value
         goods_value_usd = goods_value_cny / self.usd_cny
         goods_value_rub = goods_value_usd * self.usd_rub
         
-        # Documents and broker (in RUB)
-        docs_broker_rub = self.docs_rub + self.broker_rub
+        # Broker (in RUB)
+        broker_rub = self.broker_rub
         
         # Duty calculation
-        duty_rub = self._calculate_duty(input_data, tnved_data)
+        duty_rub = self._calculate_duty(input_data, tnved_data, logistics_rub)
+        
+        # Customs fees calculation (based on batch value in RUB)
+        customs_fees_rub = self._calculate_customs_fees(goods_value_rub)
         
         # VAT calculation
-        vat_rub = self._calculate_vat(goods_value_usd, duty_rub, tnved_data)
+        vat_rub = self._calculate_vat(goods_value_usd, duty_rub, tnved_data, logistics_rub)
         
         # Total cost
         total_rub = (
             logistics_rub +
             goods_value_rub +
-            docs_broker_rub +
+            broker_rub +
             duty_rub +
+            customs_fees_rub +
             vat_rub
         )
         
@@ -157,21 +162,21 @@ class WhiteLogisticsCalculator:
             "goods_value_cny": round(goods_value_cny, 2),
             "goods_value_usd": round(goods_value_usd, 2),
             "goods_value_rub": round(goods_value_rub, 2),
-            "docs_rub": round(self.docs_rub, 2),
-            "broker_rub": round(self.broker_rub, 2),
+            "broker_rub": round(broker_rub, 2),
             "duty_rub": round(duty_rub, 2),
+            "customs_fees_rub": round(customs_fees_rub, 2),
             "vat_rub": round(vat_rub, 2),
             "total_rub": round(total_rub, 2),
             "cost_per_unit_rub": round(cost_per_unit_rub, 2),
             "cost_per_kg_rub": round(cost_per_kg_rub, 2)
         }
 
-    def _calculate_duty(self, input_data: Dict[str, Any], tnved_data: Dict[str, Any]) -> float:
+    def _calculate_duty(self, input_data: Dict[str, Any], tnved_data: Dict[str, Any], logistics_rub: float) -> float:
         """
         Calculate duty based on TN VED data.
         
         Each duty type has its own formula:
-        - ad_valorem: duty = goods_value_rub * (duty_rate / 100)
+        - ad_valorem: duty = (goods_value_rub + logistics_rub / 2) * (duty_rate / 100)
         - по весу: duty = weight_kg * duty_rate * eur_rub
         - по единице: duty = quantity_units * duty_rate * eur_rub
         - по паре: duty = quantity_units * duty_rate * eur_rub
@@ -179,12 +184,22 @@ class WhiteLogisticsCalculator:
         Args:
             input_data: Input data with weight_kg, volume_m3, quantity_units, goods_value_cny
             tnved_data: TN VED data with duty_type and duty_rate
+            logistics_rub: Logistics cost in RUB
 
         Returns:
             Duty in RUB
         """
-        duty_type = str(tnved_data.get("duty_type", "")).strip().lower()
+        duty_type_raw = tnved_data.get("duty_type", "")
+        duty_type = str(duty_type_raw).strip().lower()
         duty_rate = tnved_data.get("duty_rate", 0.0)
+        
+        logger.info(
+            "duty_calculation_start",
+            duty_type_raw=duty_type_raw,
+            duty_type_normalized=duty_type,
+            duty_rate=duty_rate,
+            tnved_data_keys=list(tnved_data.keys())
+        )
         
         if not duty_rate or duty_rate <= 0:
             return 0.0
@@ -199,7 +214,7 @@ class WhiteLogisticsCalculator:
             goods_value_usd = goods_value_cny / self.usd_cny
             goods_value_rub = goods_value_usd * self.usd_rub
             duty_percentage = duty_rate / 100.0  # Convert percentage to decimal
-            duty_rub = goods_value_rub * duty_percentage
+            duty_rub = (goods_value_rub + logistics_rub / 2) * duty_percentage
             
             logger.info(
                 "duty_calculated_ad_valorem",
@@ -265,16 +280,49 @@ class WhiteLogisticsCalculator:
             )
             return 0.0
 
-    def _calculate_vat(self, goods_value_usd: float, duty_rub: float, tnved_data: Dict[str, Any]) -> float:
+    def _calculate_dynamic_delivery(self, weight_kg: float, volume_m3: float, goods_value_cny: float) -> float:
+        """
+        Calculate dynamic delivery cost in USD (1800-1900 range) based on product parameters hash.
+        
+        Uses MD5 hash of normalized parameters to ensure deterministic results:
+        - Same product parameters always produce same delivery cost
+        - Different products get different costs in 1800-1900 USD range
+        
+        Args:
+            weight_kg: Total batch weight in kg
+            volume_m3: Total batch volume in m³
+            goods_value_cny: Product value in CNY
+            
+        Returns:
+            Delivery cost in USD (1800.00 - 1900.00)
+        """
+        # Normalize parameters for deterministic hashing (round to avoid floating point issues)
+        normalized_weight = round(weight_kg, 2)
+        normalized_volume = round(volume_m3, 4)
+        normalized_value = round(goods_value_cny, 2)
+        
+        # Create deterministic string from parameters
+        params_str = f"{normalized_weight}:{normalized_volume}:{normalized_value}"
+        
+        # Calculate hash and convert to 0-100 range
+        hash_value = int(hashlib.md5(params_str.encode()).hexdigest(), 16) % 101
+        
+        # Scale to 1800-1900 USD range
+        delivery_usd = 1800.0 + (hash_value / 100.0) * 100.0
+        
+        return round(delivery_usd, 2)
+
+    def _calculate_vat(self, goods_value_usd: float, duty_rub: float, tnved_data: Dict[str, Any], logistics_rub: float) -> float:
         """
         Calculate VAT.
 
-        VAT = (goods_value_rub + 900 USD in RUB + duty_rub) * vat_rate
+        VAT = (duty_rub + goods_value_rub + logistics_rub / 2) * vat_rate
 
         Args:
             goods_value_usd: Goods value in USD
             duty_rub: Duty in RUB
             tnved_data: TN VED data with vat_rate
+            logistics_rub: Logistics cost in RUB
 
         Returns:
             VAT in RUB
@@ -283,7 +331,35 @@ class WhiteLogisticsCalculator:
         vat_rate = vat_rate_percentage / 100.0  # Convert to decimal
         
         goods_value_rub = goods_value_usd * self.usd_rub
-        base_for_vat = goods_value_rub + (900 * self.usd_rub) + duty_rub  # 900 USD = fixed logistics cost for VAT
+        base_for_vat = duty_rub + goods_value_rub + logistics_rub / 2
         
         return base_for_vat * vat_rate
+
+    def _calculate_customs_fees(self, batch_value_rub: float) -> float:
+        """
+        Calculate customs fees based on batch value in RUB.
+        
+        Args:
+            batch_value_rub: Batch value in RUB
+            
+        Returns:
+            Customs fees in RUB
+        """
+        v = batch_value_rub
+        
+        if v <= 200_000:
+            return 1_067.0
+        if v <= 450_000:
+            return 2_134.0
+        if v <= 1_200_000:
+            return 4_269.0
+        if v <= 2_700_000:
+            return 11_746.0
+        if v <= 4_200_000:
+            return 16_524.0
+        if v <= 5_500_000:
+            return 21_344.0
+        if v <= 7_000_000:
+            return 27_540.0
+        return 30_000.0
 

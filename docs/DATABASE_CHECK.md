@@ -188,3 +188,4 @@ grep "db_save_failed" logs/app.log
    \d calculations  -- Структура таблицы calculations
    ```
 
+
