@@ -194,7 +194,7 @@ async def rotate_status_messages(
             break
 
 
-async def handle_start_logic(message: Message, state: FSMContext):
+async def handle_start_logic(message: Message, state: FSMContext, is_new_request: bool = False):
     """Common logic for /start and /newrequest commands."""
     user_id = message.from_user.id
     from_user = message.from_user
@@ -230,7 +230,7 @@ async def handle_start_logic(message: Message, state: FSMContext):
     
     if agreement_accepted:
         # User already accepted, start express calculation
-        await start_express_calculation(message, redis_client, user_id, state)
+        await start_express_calculation(message, redis_client, user_id, state, is_new_request=is_new_request)
         return
     
     # Show agreement
@@ -266,11 +266,11 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.message(Command("newrequest"))
 async def cmd_newrequest(message: Message, state: FSMContext):
     """Handle /newrequest command - duplicate of /start."""
-    await handle_start_logic(message, state)
+    await handle_start_logic(message, state, is_new_request=True)
     logger.info("newrequest_command", user_id=message.from_user.id)
 
 
-async def start_express_calculation(message: Message, redis_client: RedisClient, user_id: int, state: FSMContext):
+async def start_express_calculation(message: Message, redis_client: RedisClient, user_id: int, state: FSMContext, is_new_request: bool = False):
     """Start express calculation after agreement acceptance."""
     # Generate calculation_id
     calculation_id = str(uuid.uuid4())
@@ -286,9 +286,30 @@ async def start_express_calculation(message: Message, redis_client: RedisClient,
     await state.update_data(calculation_id=calculation_id)
     
     # Request article input without keyboard
-    await message.answer(
-        "Введите артикул WB или ссылку на карточку товара:"
-    )
+    if is_new_request:
+        welcome_text = """Для нового запроса отправьте, пожалуйста:
+
+🔗 ссылку на товар на Wildberries
+
+или
+
+#️⃣ артикул товара на WB
+
+⏱️ Обработка одного запроса занимает до 2 минут."""
+    else:
+        welcome_text = """Здравствуйте, я бесплатный бот! 👋
+
+
+
+Я анализирую карточку Wildberries, подбираю примерный код ТН ВЭД, сравниваю стоимость доставки по белой и карго, выдаю краткий вывод по товару для входа в ВЭД.
+
+- На обработку запроса уходит до 2 минут.
+
+- Все расчёты являются ориентировочными и не являются офертой.
+
+🔗 Просто отправьте ссылку на товар или артикул WB"""
+    
+    await message.answer(welcome_text)
     
     logger.info(
         "express_calculation_started",
@@ -824,7 +845,7 @@ async def handle_article_input(message: Message, state: FSMContext):
 @router.message(F.text.in_(["Новый запрос", "🔄 Новый запрос"]))
 async def handle_new_request_button(message: Message, state: FSMContext):
     """Handle 'Новый запрос' button click - same as /newrequest command."""
-    await handle_start_logic(message, state)
+    await handle_start_logic(message, state, is_new_request=True)
     logger.info("new_request_button_clicked", user_id=message.from_user.id)
 
 
@@ -963,7 +984,7 @@ async def handle_new_request_callback(callback: CallbackQuery, state: FSMContext
     
     # If user has agreement accepted, start express calculation directly
     if agreement_accepted:
-        await start_express_calculation(callback.message, redis_client, user_id, state)
+        await start_express_calculation(callback.message, redis_client, user_id, state, is_new_request=True)
     else:
         # If no agreement found, use standard start logic
         if not hasattr(callback.message, 'text'):
