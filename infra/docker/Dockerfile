@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose service port
-EXPOSE 8090
+EXPOSE 8444
 
 # Default command (can be overridden in docker-compose)
 CMD ["python", "apps/bot_service/main.py"]

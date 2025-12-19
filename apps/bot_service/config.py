@@ -39,7 +39,7 @@ class Config:
     WHITE_LOGISTICS_BROKER_RUB: float = float(os.getenv("WHITE_LOGISTICS_BROKER_RUB", "25000"))
 
     # Service
-    SERVICE_PORT: int = int(os.getenv("SERVICE_PORT", "8443"))
+    SERVICE_PORT: int = int(os.getenv("SERVICE_PORT", "8444"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
 
