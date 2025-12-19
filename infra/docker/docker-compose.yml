@@ -1,21 +1,4 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: wb_lead_redis
-    ports:
-      - "6380:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    stop_grace_period: 5s
-    stop_signal: SIGTERM
-    networks:
-      - wb_lead_network
-
   bot_service:
     build:
       context: ../..
@@ -25,9 +8,6 @@ services:
       - ../../.env
     ports:
       - "8443:8444"
-    depends_on:
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGTERM
@@ -35,8 +15,7 @@ services:
     networks:
       - wb_lead_network
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql+asyncpg://app:app@host.docker.internal:5433/app
+      - DATABASE_URL=postgresql+asyncpg://app:app@docker-postgres-1:5432/app
 
   worker:
     build:
@@ -45,9 +24,6 @@ services:
     container_name: wb_lead_worker
     env_file:
       - ../../.env
-    depends_on:
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGTERM
@@ -55,11 +31,7 @@ services:
     networks:
       - wb_lead_network
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql+asyncpg://app:app@host.docker.internal:5433/app
-
-volumes:
-  redis_data:
+      - DATABASE_URL=postgresql+asyncpg://app:app@docker-postgres-1:5432/app
 
 networks:
   wb_lead_network:
