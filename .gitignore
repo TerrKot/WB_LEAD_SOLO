@@ -37,6 +37,7 @@ Thumbs.db
 # Project specific
 *.html
 *.json
+!rules/TN VED RED ZONE RULES.json
 search_response.json
 test_page.html
 

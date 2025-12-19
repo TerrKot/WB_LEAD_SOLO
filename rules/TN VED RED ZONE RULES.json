@@ -1,0 +1,190 @@
+{
+  "$schema": "https://example.org/tnved-red-rules.schema.json",
+  "meta": {
+    "name": "TN VED RED ZONE RULES",
+    "version": "1.0.0",
+    "language": "ru",
+    "purpose": "Автоматическая классификация кодов ТН ВЭД по запрещённым и рискованным категориям",
+    "description": "Файл содержит формализованные машинопонятные правила для экспресс-проверки кодов ТН ВЭД. Используется для автоматического BLOCK / RISK / ALLOW решения без анализа текстового описания товара.",
+    "usage": [
+      "Нормализовать входной код ТН ВЭД до строки из 10 цифр",
+      "Проверять правила сверху вниз",
+      "Первое совпадение возвращает итоговое решение",
+      "Если совпадений нет — ALLOW"
+    ]
+  },
+
+  "normalization": {
+    "rule": "Оставить только цифры, обрезать до 10 символов",
+    "example": {
+      "input": "33 04 99 000 0",
+      "output": "3304990000"
+    }
+  },
+
+  "decision_priority": ["BLOCK", "RISK", "ALLOW"],
+
+  "rule_engine": {
+    "operators": {
+      "prefix": "Сравнение первых N цифр кода",
+      "range": "Сравнение диапазона по первым N цифрам",
+      "exact": "Точное совпадение 10-значного кода"
+    }
+  },
+
+  "rules": [
+    {
+      "id": "FOOD_ALL",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "range", "length": 2, "value": ["01", "24"] }],
+      "reason": "Любая пищевая продукция (включая детское, диетическое и спецпитание)",
+      "legal_basis": "ТН ВЭД ЕАЭС, главы 01–24"
+    },
+
+    {
+      "id": "PHARMA_ALL",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 2, "value": "30" }],
+      "reason": "Лекарственные и ветеринарные препараты",
+      "legal_basis": "Глава 30 ТН ВЭД"
+    },
+
+    {
+      "id": "MEDICAL_DEVICES",
+      "decision": "BLOCK",
+      "conditions": [
+        { "type": "prefix", "length": 4, "value": "9018" },
+        { "type": "prefix", "length": 4, "value": "9019" },
+        { "type": "prefix", "length": 4, "value": "9021" },
+        { "type": "prefix", "length": 4, "value": "9022" },
+        { "type": "prefix", "length": 4, "value": "9027" },
+        { "type": "prefix", "length": 4, "value": "3822" }
+      ],
+      "reason": "Медицинские изделия, приборы и диагностические тесты",
+      "legal_basis": "ТН ВЭД 9018–9027, 3822"
+    },
+
+    {
+      "id": "COSMETICS_AND_HYGIENE",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 2, "value": "33" }],
+      "reason": "Парфюмерно-косметическая и гигиеническая продукция",
+      "legal_basis": "Глава 33 ТН ВЭД"
+    },
+
+    {
+      "id": "HOUSEHOLD_CHEMICALS",
+      "decision": "BLOCK",
+      "conditions": [
+        { "type": "prefix", "length": 4, "value": "3401" },
+        { "type": "prefix", "length": 4, "value": "3402" },
+        { "type": "prefix", "length": 4, "value": "3808" }
+      ],
+      "reason": "Бытовая химия и дезинфицирующие средства",
+      "legal_basis": "ТН ВЭД 3401, 3402, 3808"
+    },
+
+    {
+      "id": "ALCOHOL",
+      "decision": "BLOCK",
+      "conditions": [
+        { "type": "range", "length": 4, "value": ["2203", "2208"] }
+      ],
+      "reason": "Алкогольная продукция",
+      "legal_basis": "ТН ВЭД 2203–2208"
+    },
+
+    {
+      "id": "TOBACCO_AND_NICOTINE",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 2, "value": "24" }],
+      "reason": "Табачная и никотинсодержащая продукция",
+      "legal_basis": "Глава 24 ТН ВЭД"
+    },
+
+    {
+      "id": "PYROTECHNICS",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 4, "value": "3604" }],
+      "reason": "Пиротехника и взрывчатые изделия",
+      "legal_basis": "ТН ВЭД 3604"
+    },
+
+    {
+      "id": "WATER_TREATMENT",
+      "decision": "BLOCK",
+      "conditions": [
+        { "type": "prefix", "length": 6, "value": "842121" },
+        { "type": "prefix", "length": 6, "value": "842129" },
+        { "type": "prefix", "length": 6, "value": "842199" }
+      ],
+      "reason": "Оборудование и компоненты для очистки питьевой воды",
+      "legal_basis": "ТН ВЭД 8421"
+    },
+
+    {
+      "id": "BATTERIES",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 4, "value": "8507" }],
+      "reason": "Силовые аккумуляторы и литиевые батареи",
+      "legal_basis": "ТН ВЭД 8507"
+    },
+
+    {
+      "id": "GAS_CYLINDERS",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 4, "value": "7311" }],
+      "reason": "Газовые баллоны и ёмкости под давлением",
+      "legal_basis": "ТН ВЭД 7311"
+    },
+
+    {
+      "id": "WEAPONS",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 2, "value": "93" }],
+      "reason": "Оружие, боеприпасы и основные части",
+      "legal_basis": "Глава 93 ТН ВЭД"
+    },
+
+    {
+      "id": "DRONES",
+      "decision": "BLOCK",
+      "conditions": [{ "type": "prefix", "length": 4, "value": "8806" }],
+      "reason": "Беспилотные летательные аппараты (БПЛА)",
+      "legal_basis": "ТН ВЭД 8806"
+    },
+
+    {
+      "id": "COMPUTERS_AND_PORTABLES",
+      "decision": "ALLOW",
+      "conditions": [
+        { "type": "prefix", "length": 4, "value": "8471" },
+        { "type": "prefix", "length": 6, "value": "847130" },
+        { "type": "prefix", "length": 6, "value": "847141" },
+        { "type": "prefix", "length": 6, "value": "847149" },
+        { "type": "prefix", "length": 6, "value": "847150" }
+      ],
+      "reason": "Ноутбуки, планшеты и вычислительные машины",
+      "legal_basis": "ТН ВЭД 8471 (вычислительные машины)"
+    },
+
+    {
+      "id": "CRYPTO_AND_RADIO_RISK",
+      "decision": "RISK",
+      "conditions": [
+        { "type": "prefix", "length": 4, "value": "8471" },
+        { "type": "prefix", "length": 4, "value": "8517" },
+        { "type": "prefix", "length": 4, "value": "8525" },
+        { "type": "prefix", "length": 4, "value": "8526" }
+      ],
+      "reason": "Потенциальные криптографические и радиоэлектронные средства",
+      "legal_basis": "Единый перечень 2.16 / 2.19 (требуется доп.проверка)"
+    }
+  ],
+
+  "notes": [
+    "Аэрозольная упаковка, класс опасности ДОПОГ и санкционность не определяются надёжно по ТН ВЭД и требуют второго слоя проверки",
+    "RISK означает необходимость ручной или документальной проверки",
+    "BLOCK означает автоматический отказ без дополнительных проверок"
+  ]
+}
