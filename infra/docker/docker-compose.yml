@@ -38,7 +38,7 @@ services:
       - wb_lead_network
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql+asyncpg://app:app@bd_demo_postgres:5432/bd_demo
+      - DATABASE_URL=postgresql+asyncpg://app:app@host.docker.internal:5433/app
 
   worker:
     build:
@@ -58,7 +58,7 @@ services:
       - wb_lead_network
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql+asyncpg://app:app@bd_demo_postgres:5432/bd_demo
+      - DATABASE_URL=postgresql+asyncpg://app:app@host.docker.internal:5433/app
 
 volumes:
   redis_data:
