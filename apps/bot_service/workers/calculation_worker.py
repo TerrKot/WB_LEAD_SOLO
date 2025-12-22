@@ -1063,19 +1063,17 @@ class CalculationWorker:
                 f"-Вес: {cargo_weight_kg:.2f} кг",
                 f"-Объём: {cargo_volume_m3:.2f} м³",
                 f"-Плотность товара: {density_kg_m3:.2f} кг/м³",
-                f"-Курсы: {cargo_usd_rub:.2f} RUB/USD {cargo_rub_cny:.1f} RUB/CNY",
+                f"-Курсы валют: {cargo_usd_rub:.2f} RUB/USD {cargo_rub_cny:.1f} RUB/CNY",
                 f"",
-                f"Пояснение: Вес с учетом упаковки",
                 f"<b>Затраты:</b>",
-                f"Доставка: {cargo_cost_usd.get('freight_usd', 0):.2f} USD ({cargo_cost_rub.get('freight_rub', 0):.2f} RUB)",
-                f"Страховка: {cargo_cost_usd.get('insurance_usd', 0):.2f} USD ({cargo_cost_rub.get('insurance_rub', 0):.2f} RUB)",
+                f"Товар: {goods_value_cny:.0f} CNY ({goods_value_rub:.2f} RUB)",
                 f"Комиссия байера: {buyer_commission_cny:.0f} CNY ({cargo_cost_rub.get('buyer_commission_rub', 0):.2f} RUB)",
                 f"Упаковка: {cargo_cost_usd.get('packaging_usd', 0):.2f} USD ({cargo_cost_rub.get('packaging_rub', 0):.2f} RUB)",
-                f"Товар: {goods_value_cny:.0f} CNY ({goods_value_rub:.2f} RUB)",
+                f"Страховка: {cargo_cost_usd.get('insurance_usd', 0):.2f} USD ({cargo_cost_rub.get('insurance_rub', 0):.2f} RUB)",
+                f"Доставка: {cargo_cost_usd.get('freight_usd', 0):.2f} USD ({cargo_cost_rub.get('freight_rub', 0):.2f} RUB)",
                 f"",
                 f"<b>Итого:</b>",
                 f"Всего: {cargo_cost_usd.get('total_cargo_usd', 0):.2f} USD ({cargo_cost_rub.get('total_cargo_rub', 0):.2f} RUB)",
-                f"За кг: {cargo_cost_usd.get('cost_per_kg_usd', 0):.2f} USD/кг ({cargo_cost_rub.get('cost_per_kg_rub', 0):.2f} RUB/кг)",
                 f"За штуку: {cargo_cost_usd.get('cost_per_unit_usd', 0):.2f} USD/шт ({cargo_cost_rub.get('cost_per_unit_rub', 0):.2f} RUB/шт)\n"
             ])
         
@@ -1156,7 +1154,7 @@ class CalculationWorker:
                 f"(срок доставки авто 20-30 дней)\n",
                 f"-Вес: {white_weight_kg:.2f} кг",
                 f"-Объём: {white_volume_m3:.2f} м³",
-                f"-Курс: {white_usd_rub:.2f} RUB/USD {white_rub_cny:.0f}RUB/CNY",
+                f"-Курсы валют: {white_usd_rub:.2f} RUB/USD {white_rub_cny:.0f}RUB/CNY",
             ])
             
             # Add TN VED code line if available
@@ -1188,16 +1186,15 @@ class CalculationWorker:
             message_parts.extend([
                 f"",
                 f"<b>Затраты:</b>",
-                f"Логистика: {logistics_usd:.2f} USD ({white.get('logistics_rub', 0):.2f} RUB)",
                 f"Товар: {goods_value_usd:.2f} USD ({white.get('goods_value_rub', 0):.2f} RUB)",
+                f"Логистика: {logistics_usd:.2f} USD ({white.get('logistics_rub', 0):.2f} RUB)",
                 f"Брокер: {white.get('broker_rub', 0):.2f} RUB",
-                f"Пошлина: {white.get('duty_rub', 0):.2f} RUB{f' ({duty_rate_display}{duty_minimum_display})' if duty_rate_display else ''}",
                 f"Таможенные сборы: {white.get('customs_fees_rub', 0):.2f} RUB",
+                f"Пошлина: {white.get('duty_rub', 0):.2f} RUB{f' ({duty_rate_display}{duty_minimum_display})' if duty_rate_display else ''}",
                 f"НДС: {white.get('vat_rub', 0):.2f} RUB{f' ({vat_rate_display})' if vat_rate_display else ''}",
                 f"",
                 f"<b>Итого:</b>",
                 f"Всего: {total_usd:.2f} USD ({total_rub:.2f} RUB)",
-                f"За кг: {white.get('cost_per_kg_rub', 0):.2f} RUB/кг",
                 f"За штуку: {white.get('cost_per_unit_rub', 0):.2f} RUB/шт"
             ])
         

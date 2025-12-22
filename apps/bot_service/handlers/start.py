@@ -16,6 +16,7 @@ from apps.bot_service.clients.database import DatabaseClient, User
 from apps.bot_service.services.input_parser import InputParser
 from apps.bot_service.services.wb_parser import WBParserService
 from apps.bot_service.services.exchange_rate_service import ExchangeRateService
+from apps.bot_service.services.detailed_calculation_service import DetailedCalculationService
 from apps.bot_service.utils.error_handler import ErrorHandler
 from apps.bot_service.utils.logger_utils import log_event
 
@@ -247,11 +248,28 @@ async def handle_start_logic(message: Message, state: FSMContext, is_new_request
         ]
     ])
     
-    text = """Пользовательское соглашение
+    text = """Пользовательское соглашение и обработка данных
 
-Согласие на обработку персональных данных
+Используя этого бота, вы соглашаетесь с тем, что:
 
-Для использования бота необходимо принять пользовательское соглашение и дать согласие на обработку персональных данных."""
+Бот обрабатывает данные, которые вы добровольно отправляете в чат:
+– ссылку или артикул товара на Wildberries,
+– описание товара, цену, вес и другие параметры,
+– технические данные Telegram (ID, username, время запросов).
+
+Эти данные используются только для:
+– анализа карточки товара,
+– подбора примерного кода ТН ВЭД,
+– сравнения ориентировочной стоимости доставки по белой схеме и карго,
+– формирования кратких рекомендаций по ВЭД.
+
+Данные могут храниться на серверах и сервисах, которые используются для работы бота (в т.ч. облачные провайдеры и сервисы ИИ).
+Оператор принимает разумные меры для защиты данных, но не может гарантировать абсолютную безопасность.
+
+Все расчёты и рекомендации носят ориентировочный характер и не являются офертой.
+Итоговые решения по схеме поставки, коду ТН ВЭД, документам и экономике вы принимаете самостоятельно, после консультации с менеджером/специалистом по ВЭД.
+
+Если вы не согласны с обработкой данных, просто не используйте бота и не отправляйте ему информацию."""
     
     await message.answer(text, reply_markup=keyboard)
     logger.info("start_command", user_id=user_id)
@@ -1053,13 +1071,6 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
     product_price = wb_parser.get_product_price(product_data)
     price_rub = product_price / 100 if product_price else 0
     
-    # Get exchange rates to calculate purchase price in CNY
-    # Purchase price in CNY = (Price WB / 4) / RUB/CNY rate
-    exchange_rate_service = ExchangeRateService()
-    cb_rates = await exchange_rate_service._get_cb_rates()
-    rub_cny_rate = cb_rates["usd_rub"] / cb_rates["usd_cny"] if cb_rates["usd_cny"] > 0 else 11.5
-    purchase_price_cny = (price_rub / 4) / rub_cny_rate  # Расчётная закупочная цена в CNY = (цена WB / 4) / курс RUB/CNY
-    
     weight = wb_parser.get_product_weight(product_data) or 0
     
     # Volume priority: 1) Basket API (card_data), 2) WB API v4 (product_data), 3) GPT fallback
@@ -1102,6 +1113,31 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
     
     # Convert volume from liters to m³ (1 liter = 0.001 m³)
     volume_m3 = volume_liters * 0.001 if volume_liters else 0
+    
+    # Calculate purchase price in CNY using new formula
+    exchange_rate_service = ExchangeRateService()
+    cb_rates = await exchange_rate_service._get_cb_rates()
+    usd_rub_rate = cb_rates["usd_rub"]
+    usd_cny_rate = cb_rates["usd_cny"]
+    
+    # Use new calculation method with 0.38 coefficient and 8-28% constraint
+    detailed_calc_service = DetailedCalculationService(
+        exchange_rate_usd_rub=usd_rub_rate,
+        exchange_rate_usd_cny=usd_cny_rate
+    )
+    
+    if weight > 0 and volume_m3 > 0:
+        purchase_price_cny = detailed_calc_service.calculate_purchase_price_cny(
+            price_rub=price_rub,
+            unit_weight_kg=weight,
+            unit_volume_m3=volume_m3,
+            usd_rub_rate=usd_rub_rate,
+            usd_cny_rate=usd_cny_rate
+        )
+    else:
+        # Fallback to old formula if weight or volume is missing
+        rub_cny_rate = usd_rub_rate / usd_cny_rate if usd_cny_rate > 0 else 11.5
+        purchase_price_cny = (price_rub / 4) / rub_cny_rate
     
     # Build parameters message
     message_text = (
@@ -1554,11 +1590,30 @@ async def show_parameters_screen(
     
     purchase_price_cny = purchase_price_adjusted_cny if purchase_price_adjusted_cny is not None else state_data.get("current_purchase_price_cny")
     if purchase_price_cny is None:
-        # Calculate purchase price in CNY: (Price WB / 4) / RUB/CNY rate
+        # Calculate purchase price in CNY using new formula
         exchange_rate_service = ExchangeRateService()
         cb_rates = await exchange_rate_service._get_cb_rates()
-        rub_cny_rate = cb_rates["usd_rub"] / cb_rates["usd_cny"] if cb_rates["usd_cny"] > 0 else 11.5
-        purchase_price_cny = (price_rub / 4) / rub_cny_rate
+        usd_rub_rate = cb_rates["usd_rub"]
+        usd_cny_rate = cb_rates["usd_cny"]
+        
+        # Use new calculation method with 0.38 coefficient and 8-28% constraint
+        detailed_calc_service = DetailedCalculationService(
+            exchange_rate_usd_rub=usd_rub_rate,
+            exchange_rate_usd_cny=usd_cny_rate
+        )
+        
+        if weight > 0 and volume_m3 > 0:
+            purchase_price_cny = detailed_calc_service.calculate_purchase_price_cny(
+                price_rub=price_rub,
+                unit_weight_kg=weight,
+                unit_volume_m3=volume_m3,
+                usd_rub_rate=usd_rub_rate,
+                usd_cny_rate=usd_cny_rate
+            )
+        else:
+            # Fallback to old formula if weight or volume is missing
+            rub_cny_rate = usd_rub_rate / usd_cny_rate if usd_cny_rate > 0 else 11.5
+            purchase_price_cny = (price_rub / 4) / rub_cny_rate
     
     article_id = product_data.get("id") or product_data.get("nmId") or state_data.get("article_id")
     

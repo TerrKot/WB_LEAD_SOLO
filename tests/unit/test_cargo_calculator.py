@@ -191,15 +191,15 @@ class TestCargoCalculator:
         calculator = CargoCalculator()
         
         # Test density 100-110
-        rate = calculator._get_tariff_rate_per_kg(105.0)
+        rate = calculator.get_tariff_rate_per_kg(105.0)
         assert rate == 4.9
         
         # Test density 200-250
-        rate = calculator._get_tariff_rate_per_kg(225.0)
+        rate = calculator.get_tariff_rate_per_kg(225.0)
         assert rate == 3.9
         
         # Test density > 1000
-        rate = calculator._get_tariff_rate_per_kg(1500.0)
+        rate = calculator.get_tariff_rate_per_kg(1500.0)
         assert rate == 3.1
 
     def test_calculate_cost_per_unit(self):
@@ -227,5 +227,7 @@ class TestCargoCalculator:
         assert result["cargo_cost_rub"]["cost_per_unit_rub"] is not None
         assert result["cargo_cost_usd"]["cost_per_kg_usd"] is not None
         assert result["cargo_cost_rub"]["cost_per_kg_rub"] is not None
+
+
 
 

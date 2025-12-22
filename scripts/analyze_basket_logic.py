@@ -101,3 +101,5 @@ for div in [100, 150, 200]:
                 print(f"  {status} {ex['article']}: ({ex['vol']} // {div}) % {mod} = {result} (expected {ex['basket']})")
 
 
+
+

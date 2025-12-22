@@ -126,7 +126,7 @@ class CargoCalculator:
             freight_usd = volume_m3 * tariff_value_usd
         else:
             tariff_type = "per_kg"
-            tariff_value_usd = self._get_tariff_rate_per_kg(density_kg_m3)
+            tariff_value_usd = self.get_tariff_rate_per_kg(density_kg_m3)
             freight_usd = weight_kg * tariff_value_usd
         
         # Step 4: Insurance by specific value
@@ -256,7 +256,7 @@ class CargoCalculator:
             }
         }
 
-    def _get_tariff_rate_per_kg(self, density_kg_m3: float) -> float:
+    def get_tariff_rate_per_kg(self, density_kg_m3: float) -> float:
         """
         Get tariff rate per kg based on density.
 

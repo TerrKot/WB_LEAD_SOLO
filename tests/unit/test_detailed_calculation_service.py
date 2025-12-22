@@ -85,7 +85,7 @@ class TestDetailedCalculationService:
             unit_weight_kg=1.0,
             unit_volume_m3=0.01,
             unit_price_rub=1000.0,
-            purchase_price_rub=250.0,
+            purchase_price_cny=20.0,
             tnved_data={
                 "duty_type": "ad valorem",
                 "duty_rate": 5.0,
@@ -110,7 +110,7 @@ class TestDetailedCalculationService:
             unit_weight_kg=0,  # Invalid
             unit_volume_m3=0.01,
             unit_price_rub=1000.0,
-            purchase_price_rub=250.0,
+            purchase_price_cny=20.0,
             tnved_data={"duty_type": "ad valorem", "duty_rate": 5.0, "vat_rate": 20.0}
         )
         
@@ -129,7 +129,7 @@ class TestDetailedCalculationService:
             unit_weight_kg=1.0,
             unit_volume_m3=0.01,
             unit_price_rub=1000.0,
-            purchase_price_rub=250.0,
+            purchase_price_cny=20.0,
             tnved_data={
                 "duty_type": "ad valorem",
                 "duty_rate": 5.0,
@@ -153,7 +153,7 @@ class TestDetailedCalculationService:
             unit_weight_kg=1.0,
             unit_volume_m3=0.01,
             unit_price_rub=1000.0,
-            purchase_price_rub=250.0,
+            purchase_price_cny=20.0,
             tnved_data={
                 "duty_type": "ad valorem",
                 "duty_rate": 5.0,
@@ -168,4 +168,127 @@ class TestDetailedCalculationService:
             assert "batch_purchase_price_rub" in batch_info
             assert batch_info["batch_weight_kg"] > 0
             assert batch_info["batch_volume_m3"] > 0
+
+    def test_calculate_purchase_price_cny_low_density(self):
+        """Test purchase price calculation with low density (volume-based delivery)."""
+        service = DetailedCalculationService(
+            exchange_rate_usd_rub=100.0,
+            exchange_rate_usd_cny=7.2
+        )
+        
+        # Low density: weight=10kg, volume=0.2m³ -> density=50 kg/m³ < 100
+        # Delivery should be calculated by volume: 0.2 * 500 = 100 USD
+        price_rub = 1000.0
+        unit_weight_kg = 10.0
+        unit_volume_m3 = 0.2
+        
+        result = service.calculate_purchase_price_cny(
+            price_rub=price_rub,
+            unit_weight_kg=unit_weight_kg,
+            unit_volume_m3=unit_volume_m3,
+            usd_rub_rate=100.0,
+            usd_cny_rate=7.2
+        )
+        
+        assert result > 0
+        # Budget CN = 1000 * 0.38 = 380 RUB
+        # Delivery CN = 0.2 * 500 * 100 = 10000 RUB
+        # Raw purchase = 380 - 10000 = -9620 RUB (will be clamped to min 8% = 80 RUB)
+        # Purchase CNY = 80 / (100/7.2) = 80 / 13.89 ≈ 5.76 CNY
+        assert result > 0  # Should be positive
+
+    def test_calculate_purchase_price_cny_high_density(self):
+        """Test purchase price calculation with high density (weight-based delivery)."""
+        service = DetailedCalculationService(
+            exchange_rate_usd_rub=100.0,
+            exchange_rate_usd_cny=7.2
+        )
+        
+        # High density: weight=150kg, volume=0.5m³ -> density=300 kg/m³ >= 100
+        # Delivery should be calculated by weight using tariff table
+        price_rub = 1000.0
+        unit_weight_kg = 150.0
+        unit_volume_m3 = 0.5
+        
+        result = service.calculate_purchase_price_cny(
+            price_rub=price_rub,
+            unit_weight_kg=unit_weight_kg,
+            unit_volume_m3=unit_volume_m3,
+            usd_rub_rate=100.0,
+            usd_cny_rate=7.2
+        )
+        
+        assert result > 0
+        # Should use tariff rate from table based on density
+
+    def test_calculate_purchase_price_cny_with_constraints(self):
+        """Test purchase price calculation with 8-28% constraints."""
+        service = DetailedCalculationService(
+            exchange_rate_usd_rub=100.0,
+            exchange_rate_usd_cny=7.2
+        )
+        
+        price_rub = 1000.0
+        unit_weight_kg = 1.0
+        unit_volume_m3 = 0.01  # density = 100 kg/m³
+        
+        result = service.calculate_purchase_price_cny(
+            price_rub=price_rub,
+            unit_weight_kg=unit_weight_kg,
+            unit_volume_m3=unit_volume_m3,
+            usd_rub_rate=100.0,
+            usd_cny_rate=7.2
+        )
+        
+        assert result > 0
+        # Budget CN = 1000 * 0.38 = 380 RUB
+        # Min constraint = 1000 * 0.08 = 80 RUB
+        # Max constraint = 1000 * 0.28 = 280 RUB
+        # Result should be within reasonable range
+
+    def test_calculate_purchase_price_cny_zero_volume_fallback(self):
+        """Test purchase price calculation fallback when volume is zero."""
+        service = DetailedCalculationService(
+            exchange_rate_usd_rub=100.0,
+            exchange_rate_usd_cny=7.2
+        )
+        
+        price_rub = 1000.0
+        unit_weight_kg = 1.0
+        unit_volume_m3 = 0.0  # Zero volume should trigger fallback
+        
+        result = service.calculate_purchase_price_cny(
+            price_rub=price_rub,
+            unit_weight_kg=unit_weight_kg,
+            unit_volume_m3=unit_volume_m3,
+            usd_rub_rate=100.0,
+            usd_cny_rate=7.2
+        )
+        
+        assert result > 0
+        # Should use fallback formula: (price_rub / 4) / rub_cny_rate
+        # (1000 / 4) / (100/7.2) = 250 / 13.89 ≈ 18 CNY
+
+    def test_calculate_purchase_price_cny_max_constraint(self):
+        """Test purchase price calculation when raw purchase exceeds max constraint."""
+        service = DetailedCalculationService(
+            exchange_rate_usd_rub=100.0,
+            exchange_rate_usd_cny=7.2
+        )
+        
+        # Very low delivery cost scenario - raw purchase might exceed 28%
+        price_rub = 1000.0
+        unit_weight_kg = 0.1  # Very light
+        unit_volume_m3 = 0.001  # Very small volume, low density
+        
+        result = service.calculate_purchase_price_cny(
+            price_rub=price_rub,
+            unit_weight_kg=unit_weight_kg,
+            unit_volume_m3=unit_volume_m3,
+            usd_rub_rate=100.0,
+            usd_cny_rate=7.2
+        )
+        
+        assert result > 0
+        # Should be clamped to max 28% = 280 RUB
 

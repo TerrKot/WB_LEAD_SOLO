@@ -19,3 +19,5 @@ with open('docs/example', 'w', encoding='utf-8') as f:
 print("Файл успешно отформатирован!")
 
 
+
+

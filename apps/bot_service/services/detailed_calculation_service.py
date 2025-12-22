@@ -360,3 +360,90 @@ class DetailedCalculationService:
             "comparison": comparison
         }
 
+    def calculate_purchase_price_cny(
+        self,
+        price_rub: float,
+        unit_weight_kg: float,
+        unit_volume_m3: float,
+        usd_rub_rate: float,
+        usd_cny_rate: float
+    ) -> float:
+        """
+        Calculate purchase price in CNY using new formula:
+        1. Budget CN = price_rub * 0.38
+        2. Delivery CN = calculate by density (weight/volume)
+        3. Raw purchase = Budget CN - Delivery CN
+        4. Apply 8-28% constraint from price WB
+        5. Convert to CNY
+
+        Args:
+            price_rub: WB price in RUB
+            unit_weight_kg: Weight of one unit in kg
+            unit_volume_m3: Volume of one unit in m³
+            usd_rub_rate: USD to RUB exchange rate
+            usd_cny_rate: USD to CNY exchange rate
+
+        Returns:
+            Purchase price in CNY
+        """
+        # Step 1: Calculate budget for China
+        budget_cn_rub = price_rub * 0.38
+
+        # Step 2: Calculate delivery from China for 1 unit
+        if unit_volume_m3 <= 0:
+            # If volume is 0 or negative, cannot calculate
+            logger.warning(
+                "purchase_price_calculation_zero_volume",
+                price_rub=price_rub,
+                unit_weight_kg=unit_weight_kg,
+                unit_volume_m3=unit_volume_m3
+            )
+            # Fallback to old formula if volume is invalid
+            rub_cny_rate = usd_rub_rate / usd_cny_rate if usd_cny_rate > 0 else 11.5
+            return (price_rub / 4) / rub_cny_rate
+
+        density_kg_m3 = unit_weight_kg / unit_volume_m3
+
+        # Calculate delivery based on density
+        if density_kg_m3 < 100:
+            # By volume: 500 USD per m³
+            delivery_cn_usd = unit_volume_m3 * 500.0
+        else:
+            # By weight: get tariff rate from table
+            tariff_rate_usd_per_kg = self.cargo_calculator.get_tariff_rate_per_kg(density_kg_m3)
+            delivery_cn_usd = unit_weight_kg * tariff_rate_usd_per_kg
+
+        # Convert delivery to RUB
+        delivery_cn_rub = delivery_cn_usd * usd_rub_rate
+
+        # Step 3: Calculate raw purchase
+        zakupka_raw_rub = budget_cn_rub - delivery_cn_rub
+
+        # Step 4: Apply 8-28% constraint
+        zakupka_min_rub = price_rub * 0.08  # Minimum 8%
+        zakupka_max_rub = price_rub * 0.28   # Maximum 28%
+
+        if zakupka_raw_rub < zakupka_min_rub:
+            zakupka_final_rub = zakupka_min_rub
+        elif zakupka_raw_rub > zakupka_max_rub:
+            zakupka_final_rub = zakupka_max_rub
+        else:
+            zakupka_final_rub = zakupka_raw_rub
+
+        # Step 5: Convert to CNY
+        rub_cny_rate = usd_rub_rate / usd_cny_rate if usd_cny_rate > 0 else 11.5
+        purchase_price_cny = zakupka_final_rub / rub_cny_rate
+
+        logger.info(
+            "purchase_price_calculated",
+            price_rub=price_rub,
+            budget_cn_rub=budget_cn_rub,
+            delivery_cn_rub=delivery_cn_rub,
+            zakupka_raw_rub=zakupka_raw_rub,
+            zakupka_final_rub=zakupka_final_rub,
+            purchase_price_cny=purchase_price_cny,
+            density_kg_m3=density_kg_m3
+        )
+
+        return purchase_price_cny
+
