@@ -177,20 +177,44 @@ async def rotate_status_messages(
             
             # Обновляем статус
             current_status = statuses[status_index % len(statuses)]
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=current_status
-            )
-            status_index += 1
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=current_status
+                )
+                status_index += 1
+            except Exception as edit_error:
+                # Если сообщение уже удалено или не найдено, прекращаем ротацию
+                error_msg = str(edit_error)
+                if "message to edit not found" in error_msg.lower() or "message not found" in error_msg.lower():
+                    logger.debug(
+                        "status_rotation_stopped_message_deleted",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        calculation_id=calculation_id
+                    )
+                    break
+                else:
+                    # Другие ошибки - логируем и продолжаем
+                    logger.warning(
+                        "status_rotation_error",
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        error=error_msg,
+                        calculation_id=calculation_id
+                    )
+                    # Продолжаем ротацию, но увеличиваем индекс
+                    status_index += 1
                 
         except Exception as e:
-            # Если сообщение уже удалено или произошла ошибка, прекращаем ротацию
+            # Если произошла критическая ошибка, прекращаем ротацию
             logger.warning(
-                "status_rotation_error",
+                "status_rotation_critical_error",
                 chat_id=chat_id,
                 message_id=message_id,
-                error=str(e)
+                error=str(e),
+                calculation_id=calculation_id
             )
             break
 
@@ -1385,27 +1409,10 @@ async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
     vat_rate = original_result.get("vat_rate")
     duty_minimum = original_result.get("duty_minimum")  # Приписка о минимальной пошлине
     
-    # Validate TN VED data: code must exist, duty_rate must be > 0 (or exempt)
+    # Validate TN VED data: code must exist, duty info must be present
+    # 0% duty rate is valid - it means the code exists and has zero duty
     if not tn_ved_code or not duty_type or duty_rate is None or vat_rate is None:
         await callback.answer("Ошибка: данные ТН ВЭД не найдены.", show_alert=True)
-        return
-    
-    # Check if duty_rate is valid
-    # If duty_rate is 0 and duty_type is not "exempt", code might not exist or be invalid
-    if duty_rate <= 0 and duty_type != "exempt":
-        await callback.answer(
-            "Ошибка: не удалось определить пошлину для данного кода ТН ВЭД. "
-            "Возможно, код не существует или неверен. Попробуйте другой товар.",
-            show_alert=True
-        )
-        logger.warning(
-            "invalid_tnved_code_for_detailed_calculation",
-            user_id=user_id,
-            calculation_id=original_calculation_id,
-            tn_ved_code=tn_ved_code,
-            duty_rate=duty_rate,
-            duty_type=duty_type
-        )
         return
     
     # Use the same calculation_id for detailed calculation (it's a continuation of express)

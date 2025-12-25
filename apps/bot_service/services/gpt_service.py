@@ -858,7 +858,21 @@ class GPTService:
         ]
         
         if not valid_candidates:
-            logger.warning("no_valid_candidates_found", total_candidates=len(candidates))
+            # Log details about invalid candidates for debugging
+            invalid_details = []
+            for c in candidates:
+                invalid_details.append({
+                    "code": c.get("code"),
+                    "exists": c.get("exists", False),
+                    "is_valid": c.get("is_valid", False),
+                    "match_score": c.get("match_score", 0.0),
+                    "duty_rate": c.get("duty_info", {}).get("duty_rate") if c.get("duty_info") else None
+                })
+            logger.warning(
+                "no_valid_candidates_found",
+                total_candidates=len(candidates),
+                invalid_candidates=invalid_details
+            )
             return None
         
         # Sort by match_score (descending), then by duty_rate (descending, but exempt is special)
@@ -1212,7 +1226,8 @@ class GPTService:
             logger.info(
                 "gpt_tn_ved_card_stage1_candidates_received",
                 product_name=product_name,
-                candidates_count=len(candidates_list)
+                candidates_count=len(candidates_list),
+                candidates=candidates_list
             )
             
             # Validate all candidates
@@ -1360,7 +1375,8 @@ class GPTService:
             logger.info(
                 "gpt_tn_ved_card_stage2_candidates_received",
                 product_name=product_name,
-                candidates_count=len(candidates_list)
+                candidates_count=len(candidates_list),
+                candidates=candidates_list
             )
             
             # Validate all candidates
@@ -1505,7 +1521,8 @@ class GPTService:
             logger.info(
                 "gpt_tn_ved_card_stage3_candidates_received",
                 product_name=product_name,
-                candidates_count=len(candidates_list)
+                candidates_count=len(candidates_list),
+                candidates=candidates_list
             )
             
             # Validate all candidates
