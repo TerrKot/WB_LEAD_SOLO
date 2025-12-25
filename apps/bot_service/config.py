@@ -25,7 +25,7 @@ class Config:
     # PostgreSQL
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://app:app@bd_demo_postgres:5432/bd_demo"
+        "postgresql+asyncpg://app:app@postgres:5432/app"
     )
 
     # Exchange Rates

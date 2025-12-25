@@ -71,12 +71,28 @@ fi
 
 # Test 7: Check init-network.sh script logic
 echo "✓ Test 7: Validating init-network.sh script..."
-if grep -q "docker_wb_lead_network" init-network.sh && \
-   grep -q "docker-redis-1" init-network.sh && \
-   grep -q "docker-postgres-1" init-network.sh; then
+if grep -q "docker_wb_lead_network" init-network.sh; then
     echo "  ✅ init-network.sh contains required logic"
 else
     echo "  ❌ init-network.sh missing required logic"
+    exit 1
+fi
+
+# Test 8: Validate Redis service
+echo "✓ Test 8: Validating Redis service..."
+if docker-compose config | grep -q "redis:"; then
+    echo "  ✅ Redis service found"
+else
+    echo "  ❌ Redis service not found"
+    exit 1
+fi
+
+# Test 9: Validate PostgreSQL service
+echo "✓ Test 9: Validating PostgreSQL service..."
+if docker-compose config | grep -q "postgres:"; then
+    echo "  ✅ PostgreSQL service found"
+else
+    echo "  ❌ PostgreSQL service not found"
     exit 1
 fi
 
@@ -84,6 +100,7 @@ echo ""
 echo "✅ All tests passed! Configuration is valid."
 echo ""
 echo "📝 Note: Make sure .env file on server has:"
-echo "   REDIS_URL=redis://docker-redis-1:6379/0"
-echo "   DATABASE_URL=postgresql+asyncpg://app:app@docker-postgres-1:5432/app"
+echo "   REDIS_URL=redis://redis:6379/0"
+echo "   DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app"
+
 
