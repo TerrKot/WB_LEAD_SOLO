@@ -74,29 +74,50 @@ docker-compose logs -f network_init
 
 ## Автозапуск при перезагрузке сервера
 
-Для автоматического запуска всех сервисов при перезагрузке создайте systemd service:
+Для автоматического запуска всех сервисов при перезагрузке и автоматического перезапуска при падении:
 
 ```bash
-# Скопируйте service файл
+# Скопируйте service файлы
 sudo cp /root/WB_LEAD_SOLO/infra/docker/wb-lead-bot.service /etc/systemd/system/
+sudo cp /root/WB_LEAD_SOLO/infra/docker/wb-lead-bot-healthcheck.service /etc/systemd/system/
+sudo cp /root/WB_LEAD_SOLO/infra/docker/wb-lead-bot-healthcheck.timer /etc/systemd/system/
 
-# Обновите путь в файле, если он отличается
+# Сделайте health-check.sh исполняемым
+chmod +x /root/WB_LEAD_SOLO/infra/docker/health-check.sh
+
+# Обновите пути в файлах, если они отличаются
 sudo nano /etc/systemd/system/wb-lead-bot.service
+sudo nano /etc/systemd/system/wb-lead-bot-healthcheck.service
 
 # Перезагрузите systemd
 sudo systemctl daemon-reload
 
-# Включите автозапуск
+# Включите автозапуск основного сервиса
 sudo systemctl enable wb-lead-bot.service
 
-# Запустите сервис
+# Включите и запустите health check timer
+sudo systemctl enable wb-lead-bot-healthcheck.timer
+sudo systemctl start wb-lead-bot-healthcheck.timer
+
+# Запустите основной сервис
 sudo systemctl start wb-lead-bot.service
 
 # Проверьте статус
 sudo systemctl status wb-lead-bot.service
+sudo systemctl status wb-lead-bot-healthcheck.timer
+
+# Посмотреть логи health check
+sudo journalctl -u wb-lead-bot-healthcheck.service -f
 ```
 
-После этого все сервисы (включая 5 воркеров) будут автоматически запускаться при перезагрузке сервера.
+**Что это даёт:**
+- ✅ Автоматический запуск всех сервисов при перезагрузке сервера
+- ✅ Автоматический перезапуск упавших контейнеров (Docker `restart: always`)
+- ✅ Периодическая проверка здоровья каждые 2 минуты
+- ✅ Автоматическое восстановление количества воркеров (если упал один из 5)
+- ✅ Автоматический перезапуск нездоровых контейнеров
+
+После этого все сервисы будут автоматически запускаться при перезагрузке и автоматически перезапускаться при падении.
 
 ## Troubleshooting
 
