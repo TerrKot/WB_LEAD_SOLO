@@ -716,7 +716,7 @@ class WBParserService:
         """
         Fetch product card data from basket-*.wbbasket.ru API.
         Basket number is calculated automatically using formula based on article_id.
-        If 404 error occurs, tries neighboring basket numbers (±1, ±2) as fallback.
+        If 404 error occurs, tries neighboring basket numbers (±1, ±2, ±3, ±4) as fallback.
         
         Args:
             article_id: Article ID (nmId)
@@ -741,7 +741,7 @@ class WBParserService:
         basket_numbers_to_try = [initial_basket]
         
         # Add neighboring basket numbers as fallback options
-        for offset in [-2, -1, 1, 2]:
+        for offset in [-4, -3, -2, -1, 1, 2, 3, 4]:
             neighbor_basket = initial_basket + offset
             if 0 <= neighbor_basket <= 99:
                 if neighbor_basket not in basket_numbers_to_try:
