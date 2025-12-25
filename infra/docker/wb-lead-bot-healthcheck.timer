@@ -1,0 +1,12 @@
+[Unit]
+Description=Run WB Lead Bot Health Check every 2 minutes
+Requires=wb-lead-bot-healthcheck.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=wb-lead-bot-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,14 @@
+[Unit]
+Description=WB Lead Bot Health Check and Auto-Restart
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/WB_LEAD_SOLO/infra/docker
+ExecStart=/bin/bash /root/WB_LEAD_SOLO/infra/docker/health-check.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
