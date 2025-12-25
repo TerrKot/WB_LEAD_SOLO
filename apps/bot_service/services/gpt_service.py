@@ -858,21 +858,7 @@ class GPTService:
         ]
         
         if not valid_candidates:
-            # Log details about invalid candidates for debugging
-            invalid_details = []
-            for c in candidates:
-                invalid_details.append({
-                    "code": c.get("code"),
-                    "exists": c.get("exists", False),
-                    "is_valid": c.get("is_valid", False),
-                    "match_score": c.get("match_score", 0.0),
-                    "duty_rate": c.get("duty_info", {}).get("duty_rate") if c.get("duty_info") else None
-                })
-            logger.warning(
-                "no_valid_candidates_found",
-                total_candidates=len(candidates),
-                invalid_candidates=invalid_details
-            )
+            logger.warning("no_valid_candidates_found", total_candidates=len(candidates))
             return None
         
         # Sort by match_score (descending), then by duty_rate (descending, but exempt is special)
@@ -1226,8 +1212,7 @@ class GPTService:
             logger.info(
                 "gpt_tn_ved_card_stage1_candidates_received",
                 product_name=product_name,
-                candidates_count=len(candidates_list),
-                candidates=candidates_list
+                candidates_count=len(candidates_list)
             )
             
             # Validate all candidates
@@ -1375,8 +1360,7 @@ class GPTService:
             logger.info(
                 "gpt_tn_ved_card_stage2_candidates_received",
                 product_name=product_name,
-                candidates_count=len(candidates_list),
-                candidates=candidates_list
+                candidates_count=len(candidates_list)
             )
             
             # Validate all candidates
@@ -1521,8 +1505,7 @@ class GPTService:
             logger.info(
                 "gpt_tn_ved_card_stage3_candidates_received",
                 product_name=product_name,
-                candidates_count=len(candidates_list),
-                candidates=candidates_list
+                candidates_count=len(candidates_list)
             )
             
             # Validate all candidates
@@ -1564,8 +1547,11 @@ class GPTService:
                     )
                 return result
             else:
-                logger.error("gpt_tn_ved_card_stage3_no_valid_candidate", product_name=product_name)
-                return None
+                logger.warning("gpt_tn_ved_card_stage3_no_valid_candidate", product_name=product_name, falling_back_to_type_classification=True)
+                # Fallback: classify product type and search by type
+                return await self._get_tn_ved_code_by_product_type(
+                    card_data, category_data, product_name, wb_parser
+                )
             
         except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
             logger.error("gpt_tn_ved_card_stage3_error", product_name=product_name, error=str(e))
@@ -1573,6 +1559,278 @@ class GPTService:
         except Exception as e:
             logger.error("gpt_tn_ved_card_stage3_unexpected_error", product_name=product_name, error=str(e))
             return None
+
+    async def _get_tn_ved_code_by_product_type(
+        self,
+        card_data: Dict[str, Any],
+        category_data: Optional[Dict[str, Any]],
+        product_name: str,
+        wb_parser: Any
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fallback: Classify product type using GPT, then search TN VED code by type.
+        Used when all three stages failed to find valid candidates.
+        
+        Args:
+            card_data: Product card data from basket API
+            category_data: Optional category data from webapi/product/data
+            product_name: Product name for logging
+            wb_parser: WBParserService instance
+            
+        Returns:
+            {
+                "tn_ved_code": str (10 digits),
+                "duty_type": str,
+                "duty_rate": float,
+                "vat_rate": float (percentage)
+            } or None on error
+        """
+        logger.info(
+            "gpt_tn_ved_type_classification_started",
+            product_name=product_name
+        )
+        
+        # Collect all available data for classification
+        classification_data = {
+            "product_name": card_data.get("imt_name", product_name),
+            "subj_name": card_data.get("subj_name", ""),
+            "subj_root_name": card_data.get("subj_root_name", ""),
+            "description": card_data.get("description", "")[:500] if card_data.get("description") else "",  # Limit description length
+            "options": card_data.get("options", [])[:10] if isinstance(card_data.get("options"), list) else [],  # Limit options
+        }
+        
+        # Add category data if available
+        if category_data:
+            classification_data["type_name"] = category_data.get("type_name", "")
+            classification_data["category_name"] = category_data.get("category_name", "")
+        
+        # Build prompt for product type classification
+        prompt = f"""Определи точный тип товара для подбора кода ТН ВЭД.
+
+Данные о товаре:
+- Название: {classification_data['product_name']}
+- Тип товара (WB): {classification_data.get('subj_name', 'не указан')}
+- Категория (WB): {classification_data.get('subj_root_name', 'не указана')}
+- Тип (WB): {classification_data.get('type_name', 'не указан')}
+- Категория (WB): {classification_data.get('category_name', 'не указана')}
+- Описание: {classification_data.get('description', 'отсутствует')}
+
+Определи:
+1. Точный тип товара (например: "детская одежда", "электроника", "мебель", "игрушки")
+2. Основное назначение товара
+3. Материал (если применимо)
+4. Возрастная группа (если применимо)
+
+Верни результат в формате JSON:
+{{
+    "product_type": "точный тип товара",
+    "purpose": "основное назначение",
+    "material": "материал или 'не применимо'",
+    "age_group": "возрастная группа или 'не применимо'",
+    "key_features": ["ключевая особенность 1", "ключевая особенность 2"]
+}}"""
+        
+        try:
+            # Get product type classification from GPT
+            response = await self._call_gpt_api(prompt)
+            if not response:
+                logger.warning("gpt_type_classification_no_response", product_name=product_name)
+                return None
+            
+            content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not content:
+                logger.warning("gpt_type_classification_empty_content", product_name=product_name)
+                return None
+            
+            # Parse JSON response
+            content = content.strip()
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            type_data = json.loads(content)
+            product_type = type_data.get("product_type", "")
+            purpose = type_data.get("purpose", "")
+            key_features = type_data.get("key_features", [])
+            
+            logger.info(
+                "gpt_type_classification_received",
+                product_name=product_name,
+                product_type=product_type,
+                purpose=purpose
+            )
+            
+            # Now search TN VED code by classified type
+            search_prompt = f"""Подбери код ТН ВЭД для товара на основе классификации типа.
+
+Тип товара: {product_type}
+Назначение: {purpose}
+Ключевые особенности: {', '.join(key_features[:3]) if key_features else 'не указаны'}
+Название товара: {classification_data['product_name']}
+
+Используй сайт ifcg.ru для поиска кода ТН ВЭД.
+Верни 3-5 кандидатов кодов в формате JSON:
+{{
+    "candidates": [
+        {{
+            "tn_ved_code": "код из 10 цифр",
+            "reason": "почему этот код подходит"
+        }}
+    ]
+}}"""
+            
+            search_response = await self._call_gpt_api(search_prompt)
+            if not search_response:
+                logger.warning("gpt_tn_ved_search_by_type_no_response", product_name=product_name)
+                return None
+            
+            search_content = search_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not search_content:
+                logger.warning("gpt_tn_ved_search_by_type_empty_content", product_name=product_name)
+                return None
+            
+            # Parse candidates
+            search_content = search_content.strip()
+            if "```json" in search_content:
+                search_content = search_content.split("```json")[1].split("```")[0].strip()
+            elif "```" in search_content:
+                search_content = search_content.split("```")[1].split("```")[0].strip()
+            
+            candidates_data = json.loads(search_content)
+            candidates_list = candidates_data.get("candidates", [])
+            
+            if not candidates_list:
+                logger.warning("gpt_tn_ved_search_by_type_no_candidates", product_name=product_name)
+                return None
+            
+            logger.info(
+                "gpt_tn_ved_type_candidates_received",
+                product_name=product_name,
+                candidates_count=len(candidates_list)
+            )
+            
+            # Extract codes and validate
+            codes_to_validate = [c.get("tn_ved_code", "").strip() for c in candidates_list if c.get("tn_ved_code")]
+            
+            # Prepare product data for validation
+            product_data_for_validation = {
+                "imt_name": classification_data['product_name'],
+                "subj_name": classification_data.get('subj_name', ''),
+                "subj_root_name": classification_data.get('subj_root_name', ''),
+                "description": classification_data.get('description', '')
+            }
+            
+            # Validate candidates
+            validated_candidates = []
+            for code in codes_to_validate:
+                validated = await self._validate_candidate_code(code, product_data_for_validation)
+                validated_candidates.append(validated)
+            
+            # Select best candidate (with relaxed validation - accept lower match_score)
+            best = await self._select_best_candidate_relaxed(validated_candidates, product_data_for_validation)
+            
+            if best:
+                logger.info(
+                    "gpt_tn_ved_type_classification_success",
+                    product_name=product_name,
+                    product_type=product_type,
+                    tn_ved_code=best["tn_ved_code"],
+                    match_score=best.get("match_score", 0.0)
+                )
+                result = {
+                    "tn_ved_code": best["tn_ved_code"],
+                    "duty_type": best["duty_type"],
+                    "duty_rate": best["duty_rate"],
+                    "vat_rate": best["vat_rate"],
+                    "is_fallback": True  # Mark as fallback result
+                }
+                if "duty_minimum" in best:
+                    result["duty_minimum"] = best["duty_minimum"]
+                return result
+            else:
+                logger.warning("gpt_tn_ved_type_classification_no_valid_candidate", product_name=product_name)
+                return None
+                
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            logger.error("gpt_tn_ved_type_classification_error", product_name=product_name, error=str(e))
+            return None
+        except Exception as e:
+            logger.error("gpt_tn_ved_type_classification_unexpected_error", product_name=product_name, error=str(e))
+            return None
+
+    async def _select_best_candidate_relaxed(
+        self,
+        candidates: List[Dict[str, Any]],
+        product_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Select best candidate with relaxed validation (lower match_score threshold).
+        Used for fallback scenarios.
+        
+        Args:
+            candidates: List of validated candidate dicts
+            product_data: Product data for context
+            
+        Returns:
+            Best candidate dict or None
+        """
+        if not candidates:
+            return None
+        
+        # Filter valid candidates (exists on ifcg.ru and has duty info)
+        # Accept even with 0% duty rate
+        valid_candidates = [
+            c for c in candidates
+            if c.get("exists") and c.get("is_valid")
+        ]
+        
+        # If no valid candidates, try to use any that exists (even if not fully valid)
+        if not valid_candidates:
+            valid_candidates = [
+                c for c in candidates
+                if c.get("exists")
+            ]
+        
+        if not valid_candidates:
+            logger.warning("no_candidates_found_relaxed", total_candidates=len(candidates))
+            return None
+        
+        # Sort by match_score (descending)
+        valid_candidates.sort(key=lambda c: c.get("match_score", 0.0), reverse=True)
+        
+        best = valid_candidates[0]
+        
+        logger.info(
+            "best_candidate_selected_relaxed",
+            code=best["code"],
+            match_score=best["match_score"],
+            duty_type=best["duty_info"].get("duty_type") if best.get("duty_info") else None,
+            duty_rate=best["duty_info"].get("duty_rate") if best.get("duty_info") else None,
+            total_candidates=len(candidates),
+            valid_candidates=len(valid_candidates)
+        )
+        
+        # Get duty info
+        duty_info = best.get("duty_info", {})
+        if not duty_info:
+            # Try to parse duty if not already parsed
+            duty_info = await self._parse_ifcg_duty(best["code"])
+        
+        result = {
+            "tn_ved_code": best["code"],
+            "duty_type": duty_info.get("duty_type", "ad_valorem"),
+            "duty_rate": duty_info.get("duty_rate", 0.0),
+            "vat_rate": duty_info.get("vat_rate", 20.0),
+            "match_score": best.get("match_score", 0.0),
+            "category_description": best.get("category_description")
+        }
+        
+        # Add duty_minimum if present
+        if "duty_minimum" in duty_info:
+            result["duty_minimum"] = duty_info["duty_minimum"]
+        
+        return result
 
     async def _get_tn_ved_code_with_full_data(
         self,

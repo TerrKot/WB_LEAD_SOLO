@@ -196,15 +196,53 @@ class CalculationWorker:
             
             if article_id:
                 try:
-                    # Fetch card data from basket API
-                    card_data = await self.wb_parser.fetch_product_card_data(article_id)
+                    # Try to get card_data from Redis first (already fetched in handler)
+                    card_data_json = await self.redis.get(f"calculation:{calculation_id}:card_data")
+                    if card_data_json:
+                        try:
+                            card_data = json.loads(card_data_json)
+                            logger.info(
+                                "card_data_used_from_redis",
+                                calculation_id=calculation_id,
+                                article_id=article_id
+                            )
+                        except json.JSONDecodeError as e:
+                            logger.warning(
+                                "card_data_json_decode_error",
+                                calculation_id=calculation_id,
+                                error=str(e)
+                            )
+                            card_data = None
+                    
+                    # If not in Redis, fetch from basket API
+                    if not card_data:
+                        card_data = await self.wb_parser.fetch_product_card_data(article_id)
                     
                     if card_data:
                         # Extract subject_id from card data for category API
                         subject_id = card_data.get("data", {}).get("subject_id")
                         
-                        # Fetch category data
-                        category_data = await self.wb_parser.fetch_product_category_data(article_id, subject_id)
+                        # Try to get category_data from Redis first
+                        category_data_json = await self.redis.get(f"calculation:{calculation_id}:category_data")
+                        if category_data_json:
+                            try:
+                                category_data = json.loads(category_data_json)
+                                logger.info(
+                                    "category_data_used_from_redis",
+                                    calculation_id=calculation_id,
+                                    article_id=article_id
+                                )
+                            except json.JSONDecodeError as e:
+                                logger.warning(
+                                    "category_data_json_decode_error",
+                                    calculation_id=calculation_id,
+                                    error=str(e)
+                                )
+                                category_data = None
+                        
+                        # If not in Redis, fetch category data
+                        if not category_data:
+                            category_data = await self.wb_parser.fetch_product_category_data(article_id, subject_id)
                         
                         # Always use package weight and dimensions from card_data (Basket API)
                         # This is the primary source for weight/volume, not WB API v4

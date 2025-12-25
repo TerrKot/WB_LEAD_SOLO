@@ -712,7 +712,7 @@ class WBParserService:
         
         return f"https://basket-{basket_num}.wbbasket.ru/vol{vol}/part{part}/{article_id}/info/ru/card.json"
 
-    async def fetch_product_card_data(self, article_id: int) -> Optional[Dict[str, Any]]:
+    async def fetch_product_card_data(self, article_id: int, basket_num: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         Fetch product card data from basket-*.wbbasket.ru API.
         Basket number is calculated automatically using formula based on article_id.
@@ -720,6 +720,7 @@ class WBParserService:
         
         Args:
             article_id: Article ID (nmId)
+            basket_num: Optional basket number to use directly (skip fallback)
             
         Returns:
             Product card JSON data or None on error
@@ -736,16 +737,26 @@ class WBParserService:
             vol = int(article_str) if article_str else 0
             part = article_str
         
-        # Calculate initial basket number
-        initial_basket = self._calculate_basket_number(vol)
-        basket_numbers_to_try = [initial_basket]
+        # Use provided basket number or calculate initial basket number
+        if basket_num is not None and 0 <= basket_num <= 99:
+            initial_basket = basket_num
+            basket_numbers_to_try = [initial_basket]
+            logger.info(
+                "basket_number_provided",
+                article_id=article_id,
+                basket_num=basket_num
+            )
+        else:
+            initial_basket = self._calculate_basket_number(vol)
+            basket_numbers_to_try = [initial_basket]
         
-        # Add neighboring basket numbers as fallback options
-        for offset in [-4, -3, -2, -1, 1, 2, 3, 4]:
-            neighbor_basket = initial_basket + offset
-            if 0 <= neighbor_basket <= 99:
-                if neighbor_basket not in basket_numbers_to_try:
-                    basket_numbers_to_try.append(neighbor_basket)
+        # Add neighboring basket numbers as fallback options (only if basket_num not provided)
+        if basket_num is None:
+            for offset in [-4, -3, -2, -1, 1, 2, 3, 4]:
+                neighbor_basket = initial_basket + offset
+                if 0 <= neighbor_basket <= 99:
+                    if neighbor_basket not in basket_numbers_to_try:
+                        basket_numbers_to_try.append(neighbor_basket)
         
         logger.info(
             "basket_numbers_to_try",
