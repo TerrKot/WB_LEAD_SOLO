@@ -78,7 +78,8 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile
-    container_name: wb_lead_worker
+    # Remove container_name to allow scaling
+    # container_name: wb_lead_worker
     env_file:
       - ../../.env
     restart: unless-stopped
@@ -90,6 +91,15 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app
       - REDIS_URL=redis://redis:6379/0
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
     depends_on:
       redis:
         condition: service_healthy

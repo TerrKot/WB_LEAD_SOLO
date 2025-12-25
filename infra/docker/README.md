@@ -2,23 +2,29 @@
 
 ## Автоматическая инициализация сети
 
-При деплое на сервер просто используйте стандартную команду `docker-compose up`:
+При деплое на сервер используйте скрипт `docker-compose-up.sh`:
 
 ```bash
-cd ~/WB_LEAD/infra/docker
-docker-compose up -d
+cd ~/WB_LEAD_SOLO/infra/docker
+chmod +x docker-compose-up.sh
+./docker-compose-up.sh
 ```
 
-**Всё работает автоматически!** Docker Compose:
+**Всё работает автоматически!** Скрипт:
 1. Запустит Redis контейнер `wb_lead_redis` (встроенный Redis)
 2. Запустит PostgreSQL контейнер `wb_lead_postgres` (встроенная БД для истории запросов)
 3. Запустит init-контейнер `network_init`, который создаст сеть `docker_wb_lead_network` если её нет
-4. После успешной инициализации запустит `bot_service` и `worker`
+4. После успешной инициализации запустит `bot_service` и **5 воркеров** (worker)
 
-**Альтернатива:** Можно использовать скрипт `docker-compose-up.sh` для дополнительной диагностики:
-
+**Количество воркеров:** По умолчанию запускается 5 воркеров. Можно изменить через переменную окружения:
 ```bash
-./docker-compose-up.sh
+WORKER_REPLICAS=10 ./docker-compose-up.sh
+```
+
+**Альтернатива:** Можно использовать стандартную команду `docker-compose up` (но запустится только 1 воркер):
+```bash
+docker-compose up -d
+docker-compose up -d --scale worker=5  # Для 5 воркеров
 ```
 
 ## Обычные команды
@@ -66,6 +72,32 @@ docker-compose logs -f network_init
 4. Все сервисы автоматически подключаются к нужной сети и используют встроенные Redis и PostgreSQL
 5. Таблицы БД создаются автоматически при первом подключении через SQLAlchemy
 
+## Автозапуск при перезагрузке сервера
+
+Для автоматического запуска всех сервисов при перезагрузке создайте systemd service:
+
+```bash
+# Скопируйте service файл
+sudo cp /root/WB_LEAD_SOLO/infra/docker/wb-lead-bot.service /etc/systemd/system/
+
+# Обновите путь в файле, если он отличается
+sudo nano /etc/systemd/system/wb-lead-bot.service
+
+# Перезагрузите systemd
+sudo systemctl daemon-reload
+
+# Включите автозапуск
+sudo systemctl enable wb-lead-bot.service
+
+# Запустите сервис
+sudo systemctl start wb-lead-bot.service
+
+# Проверьте статус
+sudo systemctl status wb-lead-bot.service
+```
+
+После этого все сервисы (включая 5 воркеров) будут автоматически запускаться при перезагрузке сервера.
+
 ## Troubleshooting
 
 Если возникают проблемы с подключением:
@@ -81,6 +113,9 @@ docker network inspect docker_wb_lead_network
 docker-compose ps
 docker-compose logs redis
 docker-compose logs postgres
+
+# Проверить количество запущенных воркеров
+docker-compose ps worker | grep -c "Up"
 
 # Подключиться к PostgreSQL для проверки
 docker-compose exec postgres psql -U app -d app
