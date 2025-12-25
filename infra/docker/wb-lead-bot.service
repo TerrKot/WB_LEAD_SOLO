@@ -9,7 +9,15 @@ RemainAfterExit=yes
 WorkingDirectory=/root/WB_LEAD_SOLO/infra/docker
 ExecStart=/bin/bash /root/WB_LEAD_SOLO/infra/docker/docker-compose-up.sh
 ExecStop=/usr/bin/docker compose -f /root/WB_LEAD_SOLO/infra/docker/docker-compose.yml down
+ExecReload=/bin/bash -c '/usr/bin/docker compose -f /root/WB_LEAD_SOLO/infra/docker/docker-compose.yml restart'
 TimeoutStartSec=0
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Health check script
+ExecStartPost=/bin/bash -c 'sleep 10 && /root/WB_LEAD_SOLO/infra/docker/health-check.sh || true'
 
 [Install]
 WantedBy=multi-user.target
