@@ -744,11 +744,9 @@ class GPTService:
         duty_info = await self._parse_ifcg_duty(code)
         result["duty_info"] = duty_info
         
-        # Check if duty info is valid (code exists if we got description)
-        if duty_info["duty_rate"] == 0.0 and duty_info.get("duty_type") != "exempt":
-            # Code might not be valid
-            logger.debug("candidate_code_invalid_duty", code=code, duty_info=duty_info)
-        else:
+        # Code is valid if it exists on ifcg.ru and duty info was parsed successfully
+        # 0% duty rate is valid - it means the code exists and has zero duty
+        if duty_info and "duty_rate" in duty_info:
             result["is_valid"] = True
         
         # Calculate match score using GPT
@@ -1048,11 +1046,8 @@ class GPTService:
             duty_info = await self._parse_ifcg_duty(tn_ved_code)
             logger.info("duty_info_received", duty_info=duty_info)
             
-            # Если пошлина 0.0 и не exempt, пробуем полные данные
-            # exempt означает валидный код с нулевой пошлиной
-            if duty_info["duty_rate"] == 0.0 and duty_info.get("duty_type") != "exempt":
-                logger.warning("primary_code_duty_zero", code=tn_ved_code, trying_full_data=True)
-                return await self._get_tn_ved_code_with_full_data(product_data)
+            # 0% duty rate is valid - code exists on ifcg.ru and has zero duty
+            # No need to try full data if duty was successfully parsed
             
             logger.info(
                 "gpt_tn_ved_success",
