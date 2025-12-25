@@ -224,6 +224,10 @@ class ResultNotifier:
             message_text = result.get("message", "✅ Подробный расчёт завершён")
             message_text = clean_html_for_telegram(message_text)
             
+            # Ensure message is not empty
+            if not message_text or not message_text.strip():
+                message_text = "✅ Подробный расчёт завершён"
+            
             # Create inline keyboard with button to another bot
             detailed_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
@@ -286,8 +290,6 @@ class ResultNotifier:
             message_text = clean_html_for_telegram(message_text)
             
             # Add button for detailed calculation
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-            
             inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
@@ -329,8 +331,6 @@ class ResultNotifier:
             message_text = clean_html_for_telegram(message_text)
             
             # For 🟢 and 🟡, we need to add buttons for detailed calculation
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-            
             inline_keyboard = None
             if status in ("🟢", "🟡"):
                 inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
