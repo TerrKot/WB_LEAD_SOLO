@@ -1,4 +1,22 @@
 services:
+  network_init:
+    image: docker:latest
+    container_name: wb_lead_network_init
+    command: >
+      sh -c "
+      apk add --no-cache docker-cli >/dev/null 2>&1 &&
+      if ! docker network inspect docker_wb_lead_network >/dev/null 2>&1; then
+        docker network create docker_wb_lead_network;
+      fi &&
+      docker network connect docker_wb_lead_network docker-redis-1 2>/dev/null || true &&
+      docker network connect docker_wb_lead_network docker-postgres-1 2>/dev/null || true &&
+      echo 'Network initialized: Redis and PostgreSQL connected'
+      "
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: "no"
+    network_mode: "host"
+
   bot_service:
     build:
       context: ../..
@@ -16,6 +34,9 @@ services:
       - wb_lead_network
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@docker-postgres-1:5432/app
+    depends_on:
+      network_init:
+        condition: service_completed_successfully
 
   worker:
     build:
@@ -32,7 +53,12 @@ services:
       - wb_lead_network
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@docker-postgres-1:5432/app
+    depends_on:
+      network_init:
+        condition: service_completed_successfully
 
 networks:
   wb_lead_network:
+    name: docker_wb_lead_network
+    driver: bridge
     external: false
