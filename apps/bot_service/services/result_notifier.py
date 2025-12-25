@@ -7,7 +7,7 @@ import structlog
 
 from apps.bot_service.clients.redis import RedisClient
 from aiogram import Bot
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 logger = structlog.get_logger()
 
@@ -224,11 +224,21 @@ class ResultNotifier:
             message_text = result.get("message", "✅ Подробный расчёт завершён")
             message_text = clean_html_for_telegram(message_text)
             
+            # Create inline keyboard with button to another bot
+            detailed_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Сделать расчет точнее",
+                        url="https://t.me/Voronoi_info_bot"
+                    )
+                ]
+            ])
+            
             await self.bot.send_message(
                 chat_id=user_id,
                 text=message_text,
                 parse_mode="HTML",
-                reply_markup=main_keyboard,
+                reply_markup=detailed_keyboard,
                 disable_web_page_preview=True
             )
             
