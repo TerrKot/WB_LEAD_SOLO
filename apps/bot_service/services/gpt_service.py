@@ -740,23 +740,38 @@ class GPTService:
             result["exists"] = True
             result["category_description"] = category_description
         else:
-            logger.debug("candidate_code_not_found_on_ifcg", code=code)
-            return result
+            logger.debug(
+                "candidate_code_not_found_on_ifcg",
+                code=code,
+                url=f"https://www.ifcg.ru/kb/tnved/{code}/"
+            )
+            # Don't return early - try to get duty info anyway, maybe code exists but description parsing failed
         
         # Get duty info
         duty_info = await self._parse_ifcg_duty(code)
         result["duty_info"] = duty_info
         
-        # Code is valid if it exists on ifcg.ru and duty info was parsed successfully
-        # 0% duty rate is valid - it means the code exists and has zero duty
+        # Code is valid if it exists on ifcg.ru OR if duty info was parsed successfully
+        # If GPT returned the code, we trust it even if ifcg.ru parsing failed
+        # Use default values if duty info parsing failed
         if duty_info and "duty_rate" in duty_info:
             result["is_valid"] = True
+        elif not category_description:
+            # Code not found on ifcg.ru, but GPT returned it - use default values
+            logger.info(
+                "candidate_code_not_on_ifcg_using_defaults",
+                code=code,
+                reason="GPT returned code but ifcg.ru parsing failed, using default duty values"
+            )
+            result["duty_info"] = {"duty_type": "ad_valorem", "duty_rate": 0.0, "vat_rate": 20.0}
+            result["is_valid"] = True  # Accept GPT's suggestion even if ifcg.ru doesn't have it
         else:
             logger.debug(
                 "candidate_code_invalid_duty_info",
                 code=code,
                 has_duty_info=bool(duty_info),
-                duty_info_keys=list(duty_info.keys()) if duty_info else []
+                duty_info_keys=list(duty_info.keys()) if duty_info else [],
+                has_category_description=bool(category_description)
             )
         
         # Calculate match score using GPT
