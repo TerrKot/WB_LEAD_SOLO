@@ -406,12 +406,18 @@ class ResultNotifier:
             if not message_text or not message_text.strip():
                 message_text = "✅ Подробный расчёт завершён"
             
-            # Create inline keyboard with button to another bot
+            # Create inline keyboard with button to another bot and "New request" button
             detailed_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text="Сделать расчет точнее",
                         url="https://t.me/Voronoi_access_bot?start=WB"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Новый запрос",
+                        callback_data="new_request"
                     )
                 ]
             ])
@@ -422,13 +428,6 @@ class ResultNotifier:
                 parse_mode="HTML",
                 reply_markup=detailed_keyboard,
                 disable_web_page_preview=True
-            )
-            
-            # Send message with "New request" button
-            await self.bot.send_message(
-                chat_id=user_id,
-                text="💡 Используйте кнопку ниже для нового запроса",
-                reply_markup=main_keyboard
             )
             
             logger.info(
