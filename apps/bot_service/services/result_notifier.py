@@ -120,7 +120,8 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
         await bot.send_message(
             chat_id=config.NOTIFICATION_CHAT_ID,
             text=notification_text,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
         
         logger.info(
