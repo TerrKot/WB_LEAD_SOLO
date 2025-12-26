@@ -90,23 +90,43 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
         logger.debug("notification_skipped_no_chat_id", article_id=article_id, status=status)
         return
     
+    # Validate article_id
+    if not article_id:
+        logger.warning("notification_skipped_invalid_article_id", article_id=article_id, status=status)
+        return
+    
     try:
-        # Format username
+        # Format username - escape special HTML characters if needed
         username_str = f"@{username}" if username else "без username"
         
-        # Format WB article link
-        wb_url = f"https://www.wildberries.ru/catalog/{article_id}/detail.aspx"
-        article_link = f"<a href=\"{wb_url}\">{article_id}</a>"
+        # Format WB article link - ensure article_id is properly converted to string and validated
+        try:
+            article_id_int = int(article_id) if article_id else None
+            if not article_id_int or article_id_int <= 0:
+                logger.warning("notification_skipped_invalid_article_id", article_id=article_id, status=status)
+                return
+            article_id_str = str(article_id_int)
+        except (ValueError, TypeError):
+            logger.warning("notification_skipped_invalid_article_id_type", article_id=article_id, article_id_type=type(article_id).__name__, status=status)
+            return
+        
+        wb_url = f"https://www.wildberries.ru/catalog/{article_id_str}/detail.aspx"
+        article_link = f"<a href=\"{wb_url}\">{article_id_str}</a>"
         
         # Format notification message
         notification_text = f"{username_str} | Статус: {status} | WB: {article_link}"
         
         # Add TN VED code with link if available
         if tn_ved_code:
-            # Remove spaces and dashes from TN VED code for URL
-            tn_ved_code_clean = str(tn_ved_code).replace(" ", "").replace("-", "")
-            alta_url = f"https://www.alta.ru/tnved/code/{tn_ved_code_clean}/"
-            notification_text += f" | ТН ВЭД: <a href=\"{alta_url}\">{tn_ved_code}</a>"
+            try:
+                # Remove spaces and dashes from TN VED code for URL
+                tn_ved_code_str = str(tn_ved_code).strip()
+                tn_ved_code_clean = tn_ved_code_str.replace(" ", "").replace("-", "")
+                if tn_ved_code_clean and tn_ved_code_clean.isdigit():
+                    alta_url = f"https://www.alta.ru/tnved/code/{tn_ved_code_clean}/"
+                    notification_text += f" | ТН ВЭД: <a href=\"{alta_url}\">{tn_ved_code_str}</a>"
+            except Exception as e:
+                logger.warning("tn_ved_code_format_error", tn_ved_code=tn_ved_code, error=str(e))
         else:
             # Log when TN VED code is missing (this is normal for some statuses like ⚪️)
             logger.debug("tn_ved_code_missing_in_notification", status=status, article_id=article_id)
