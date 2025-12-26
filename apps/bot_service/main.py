@@ -3,6 +3,8 @@ import asyncio
 import sys
 import signal
 from pathlib import Path
+from datetime import datetime
+import pytz
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -22,6 +24,7 @@ from apps.bot_service.clients.redis import RedisClient
 from apps.bot_service.clients.database import DatabaseClient
 from apps.bot_service.handlers.start import router as start_router, set_redis_client, set_db_client, set_bot
 from apps.bot_service.handlers.health import health_handler
+from apps.bot_service.services.daily_report_service import DailyReportService
 
 # Configure structured logging
 structlog.configure(
@@ -39,6 +42,53 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+
+
+async def daily_report_scheduler(bot: Bot, db_client: DatabaseClient, shutdown_event: asyncio.Event):
+    """
+    Scheduler for daily reports at 12:00 Moscow time.
+    
+    Args:
+        bot: Telegram bot instance
+        db_client: Database client instance
+        shutdown_event: Event to signal shutdown
+    """
+    if not config.REPORT_CHAT_ID:
+        logger.warning("daily_report_scheduler_disabled", reason="REPORT_CHAT_ID not configured")
+        return
+    
+    report_service = DailyReportService(bot, db_client)
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    last_sent_date = None
+    
+    logger.info("daily_report_scheduler_started", report_time="12:00 MSK")
+    
+    while not shutdown_event.is_set():
+        try:
+            now_moscow = datetime.now(moscow_tz)
+            current_date = now_moscow.date()
+            current_hour = now_moscow.hour
+            current_minute = now_moscow.minute
+            
+            # Check if it's 12:00 MSK and we haven't sent report today
+            if current_hour == 12 and current_minute == 0 and last_sent_date != current_date:
+                logger.info("daily_report_scheduler_triggered", time=now_moscow.strftime("%H:%M"))
+                success = await report_service.send_report(config.REPORT_CHAT_ID)
+                if success:
+                    last_sent_date = current_date
+                    logger.info("daily_report_sent_successfully")
+                else:
+                    logger.error("daily_report_send_failed")
+            
+            # Sleep for 60 seconds before next check
+            await asyncio.sleep(60)
+            
+        except asyncio.CancelledError:
+            logger.info("daily_report_scheduler_cancelled")
+            break
+        except Exception as e:
+            logger.error("daily_report_scheduler_error", error=str(e))
+            await asyncio.sleep(60)
 
 
 async def main():
@@ -124,9 +174,20 @@ async def main():
         # Create polling task
         polling_task = asyncio.create_task(dp.start_polling(bot))
         
+        # Start daily report scheduler if configured
+        report_scheduler_task = None
+        if config.REPORT_CHAT_ID and db_client:
+            report_scheduler_task = asyncio.create_task(
+                daily_report_scheduler(bot, db_client, shutdown_event)
+            )
+        
         # Wait for shutdown signal or polling completion
+        tasks_to_wait = [polling_task, asyncio.create_task(shutdown_event.wait())]
+        if report_scheduler_task:
+            tasks_to_wait.append(report_scheduler_task)
+        
         done, pending = await asyncio.wait(
-            [polling_task, asyncio.create_task(shutdown_event.wait())],
+            tasks_to_wait,
             return_when=asyncio.FIRST_COMPLETED
         )
         
@@ -139,6 +200,13 @@ async def main():
                 polling_task.cancel()
                 try:
                     await polling_task
+                except asyncio.CancelledError:
+                    pass
+            # Cancel report scheduler task if running
+            if report_scheduler_task and not report_scheduler_task.done():
+                report_scheduler_task.cancel()
+                try:
+                    await report_scheduler_task
                 except asyncio.CancelledError:
                     pass
     except KeyboardInterrupt:

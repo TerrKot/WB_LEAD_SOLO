@@ -277,3 +277,125 @@ class DatabaseClient:
         finally:
             await session.close()
 
+    async def get_mau(self) -> int:
+        """
+        Get Monthly Active Users (MAU) - users who made at least one calculation in the last 30 days.
+        
+        Returns:
+            Number of unique users with calculations in the last 30 days
+        """
+        session = await self.get_session()
+        try:
+            query = text("""
+                SELECT COUNT(DISTINCT user_id) as mau
+                FROM calculations
+                WHERE created_at >= NOW() - INTERVAL '30 days'
+            """)
+            result = await session.execute(query)
+            row = result.fetchone()
+            return row[0] if row else 0
+        finally:
+            await session.close()
+
+    async def get_wau(self) -> int:
+        """
+        Get Weekly Active Users (WAU) - users who made at least one calculation in the last 7 days.
+        
+        Returns:
+            Number of unique users with calculations in the last 7 days
+        """
+        session = await self.get_session()
+        try:
+            query = text("""
+                SELECT COUNT(DISTINCT user_id) as wau
+                FROM calculations
+                WHERE created_at >= NOW() - INTERVAL '7 days'
+            """)
+            result = await session.execute(query)
+            row = result.fetchone()
+            return row[0] if row else 0
+        finally:
+            await session.close()
+
+    async def get_dau(self) -> int:
+        """
+        Get Daily Active Users (DAU) - users who made at least one calculation in the last 24 hours.
+        
+        Returns:
+            Number of unique users with calculations in the last 24 hours
+        """
+        session = await self.get_session()
+        try:
+            query = text("""
+                SELECT COUNT(DISTINCT user_id) as dau
+                FROM calculations
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+            """)
+            result = await session.execute(query)
+            row = result.fetchone()
+            return row[0] if row else 0
+        finally:
+            await session.close()
+
+    async def get_new_users_24h(self) -> int:
+        """
+        Get number of new users registered in the last 24 hours.
+        
+        Returns:
+            Number of new users in the last 24 hours
+        """
+        session = await self.get_session()
+        try:
+            query = text("""
+                SELECT COUNT(*) as new_users
+                FROM users
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+            """)
+            result = await session.execute(query)
+            row = result.fetchone()
+            return row[0] if row else 0
+        finally:
+            await session.close()
+
+    async def get_calculations_24h_by_status(self) -> Dict[str, int]:
+        """
+        Get number of calculations in the last 24 hours grouped by status.
+        
+        Returns:
+            Dictionary with status as key and count as value
+        """
+        session = await self.get_session()
+        try:
+            query = text("""
+                SELECT status, COUNT(*) as count
+                FROM calculations
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY status
+            """)
+            result = await session.execute(query)
+            rows = result.fetchall()
+            status_counts = {row[0]: row[1] for row in rows}
+            return status_counts
+        finally:
+            await session.close()
+
+    async def get_total_calculations_24h(self) -> int:
+        """
+        Get total number of calculations in the last 24 hours.
+        
+        Returns:
+            Total number of calculations in the last 24 hours
+        """
+        session = await self.get_session()
+        try:
+            query = text("""
+                SELECT COUNT(*) as total
+                FROM calculations
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+            """)
+            result = await session.execute(query)
+            row = result.fetchone()
+            return row[0] if row else 0
+        finally:
+            await session.close()
+
