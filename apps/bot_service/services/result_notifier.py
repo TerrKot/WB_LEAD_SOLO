@@ -325,6 +325,16 @@ class ResultNotifier:
         status = result.get("status")
         calculation_id = result.get("calculation_id")
         
+        logger.info(
+            "_send_result_message_called",
+            user_id=user_id,
+            calculation_id=calculation_id,
+            status=status,
+            assessment_status=result.get("assessment_status"),
+            calculation_type=result.get("calculation_type"),
+            result_keys=list(result.keys())
+        )
+        
         # Останавливаем ротацию статусов, если она запущена
         if calculation_id:
             rotation_stop_key = f"calculation:{calculation_id}:rotation_stop_event"
@@ -524,6 +534,14 @@ class ResultNotifier:
         
         elif (status == "completed" or status in ("🟢", "🟡")) and calculation_type != "detailed":
             # Express assessment completed (🟢 or 🟡) - but not detailed calculation
+            logger.info(
+                "express_result_processing",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                status=status,
+                calculation_type=calculation_type,
+                assessment_status=result.get("assessment_status")
+            )
             message_text = result.get("message", "✅ Расчёт завершён")
             message_text = clean_html_for_telegram(message_text)
             
@@ -578,11 +596,41 @@ class ResultNotifier:
             )
             
             # Send notification about express calculation result
+            logger.info(
+                "notification_attempt_started",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                status=status,
+                assessment_status=result.get("assessment_status"),
+                result_keys=list(result.keys()) if result else []
+            )
+            
             article_id = await self._get_article_id_from_result(result)
+            logger.info(
+                "article_id_extracted",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                article_id=article_id,
+                has_article_id=bool(article_id)
+            )
+            
             if article_id:
                 username = await self._get_username(user_id)
+                logger.info(
+                    "username_fetched",
+                    user_id=user_id,
+                    username=username,
+                    has_username=bool(username)
+                )
                 # Use assessment_status if available, otherwise use status
                 notification_status = result.get("assessment_status") or status
+                logger.info(
+                    "sending_notification",
+                    user_id=user_id,
+                    article_id=article_id,
+                    username=username,
+                    notification_status=notification_status
+                )
                 try:
                     await send_notification(self.bot, username, notification_status, article_id)
                 except Exception as e:
@@ -593,7 +641,9 @@ class ResultNotifier:
                     user_id=user_id,
                     calculation_id=result.get("calculation_id"),
                     result_keys=list(result.keys()) if result else [],
-                    has_product_data=bool(result.get("product_data")) if result else False
+                    has_product_data=bool(result.get("product_data")) if result else False,
+                    has_input_data=bool(result.get("input_data")) if result else False,
+                    product_data_keys=list(result.get("product_data", {}).keys()) if result.get("product_data") else []
                 )
         
         elif status == "failed":
