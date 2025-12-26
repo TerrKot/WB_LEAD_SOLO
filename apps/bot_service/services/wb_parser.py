@@ -647,7 +647,10 @@ class WBParserService:
 
     def _calculate_basket_number(self, vol: int) -> int:
         """
-        Calculate basket number from vol (first 4 digits of article_id).
+        Calculate basket number from vol.
+        
+        For 9-digit article IDs: vol = first 4 digits
+        For 8-digit article IDs: vol = first 3 digits
         
         Formula: basket = (vol // 175) + adjustment
         - adjustment = 2 for vol < 3000
@@ -656,7 +659,7 @@ class WBParserService:
         - adjustment = -6 for vol >= 5000
         
         Args:
-            vol: First 4 digits of article_id
+            vol: First 3-4 digits of article_id (depending on article ID length)
             
         Returns:
             Basket number (0-99)
@@ -693,24 +696,38 @@ class WBParserService:
         # - basket number is calculated from vol using formula: (vol // 175) + adjustment
         # - vol = first 4 digits of article_id
         # - part = first 6 digits of article_id
+        # Format depends on article ID length:
+        # - 9 digits: vol = first 4 digits, part = first 6 digits (e.g., 458510242 -> vol4585/part458510)
+        # - 8 digits: vol = first 3 digits, part = first 5 digits (e.g., 14698790 -> vol146/part14698)
         article_str = str(article_id)
-        
-        if len(article_str) >= 6:
-            # Extract vol (first 4 digits) and part (first 6 digits)
+        if len(article_str) >= 9:
+            # 9-digit article IDs: vol = first 4 digits, part = first 6 digits
             vol = int(article_str[:4])
             part = article_str[:6]
-        elif len(article_str) >= 4:
-            # For shorter IDs, use what we have
-            vol = int(article_str[:4])
+        elif len(article_str) >= 8:
+            # 8-digit article IDs: vol = first 3 digits, part = first 5 digits
+            vol = int(article_str[:3])
+            part = article_str[:5]
+        elif len(article_str) >= 6:
+            # 7-digit or 6-digit: try to use first 4 for vol, first 6 for part if possible
+            vol = int(article_str[:4]) if len(article_str) >= 4 else int(article_str[:3])
+            part = article_str[:6] if len(article_str) >= 6 else article_str[:5] if len(article_str) >= 5 else article_str
+        elif len(article_str) >= 5:
+            # 5-digit: vol = first 3, part = first 5
+            vol = int(article_str[:3])
+            part = article_str[:5]
+        elif len(article_str) >= 3:
+            vol = int(article_str[:3])
             part = article_str
         else:
-            # Fallback for very short article IDs
             vol = int(article_str) if article_str else 0
             part = article_str
         
         basket_num = self._calculate_basket_number(vol)
+        # Format basket number with leading zero if < 10 (basket-02, basket-03, etc.)
+        basket_str = f"{basket_num:02d}" if basket_num < 10 else str(basket_num)
         
-        return f"https://basket-{basket_num}.wbbasket.ru/vol{vol}/part{part}/{article_id}/info/ru/card.json"
+        return f"https://basket-{basket_str}.wbbasket.ru/vol{vol}/part{part}/{article_id}/info/ru/card.json"
 
     async def fetch_product_card_data(self, article_id: int, basket_num: Optional[int] = None) -> Optional[tuple[Dict[str, Any], Dict[str, int]]]:
         """
@@ -727,12 +744,28 @@ class WBParserService:
             basket_info contains: {"calculated": calculated_basket, "actual": actual_basket}
         """
         # Extract vol and part for URL building
+        # Format depends on article ID length:
+        # - 9 digits: vol = first 4 digits, part = first 6 digits (e.g., 458510242 -> vol4585/part458510)
+        # - 8 digits: vol = first 3 digits, part = first 5 digits (e.g., 14698790 -> vol146/part14698)
         article_str = str(article_id)
-        if len(article_str) >= 6:
+        if len(article_str) >= 9:
+            # 9-digit article IDs: vol = first 4 digits, part = first 6 digits
             vol = int(article_str[:4])
             part = article_str[:6]
-        elif len(article_str) >= 4:
-            vol = int(article_str[:4])
+        elif len(article_str) >= 8:
+            # 8-digit article IDs: vol = first 3 digits, part = first 5 digits
+            vol = int(article_str[:3])
+            part = article_str[:5]
+        elif len(article_str) >= 6:
+            # 7-digit or 6-digit: try to use first 4 for vol, first 6 for part if possible
+            vol = int(article_str[:4]) if len(article_str) >= 4 else int(article_str[:3])
+            part = article_str[:6] if len(article_str) >= 6 else article_str[:5] if len(article_str) >= 5 else article_str
+        elif len(article_str) >= 5:
+            # 5-digit: vol = first 3, part = first 5
+            vol = int(article_str[:3])
+            part = article_str[:5]
+        elif len(article_str) >= 3:
+            vol = int(article_str[:3])
             part = article_str
         else:
             vol = int(article_str) if article_str else 0
@@ -768,7 +801,9 @@ class WBParserService:
         
         # Try each basket number
         for basket_num in basket_numbers_to_try:
-            url = f"https://basket-{basket_num}.wbbasket.ru/vol{vol}/part{part}/{article_id}/info/ru/card.json"
+            # Format basket number with leading zero if < 10 (basket-02, basket-03, etc.)
+            basket_str = f"{basket_num:02d}" if basket_num < 10 else str(basket_num)
+            url = f"https://basket-{basket_str}.wbbasket.ru/vol{vol}/part{part}/{article_id}/info/ru/card.json"
             
             for attempt in range(self.max_retries):
                 try:
