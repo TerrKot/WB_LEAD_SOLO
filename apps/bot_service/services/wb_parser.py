@@ -679,6 +679,97 @@ class WBParserService:
         # Ensure basket is in valid range (0-99)
         return max(0, min(99, basket))
 
+    def _calculate_basket_number_by_ranges(self, vol: int) -> int:
+        """
+        Calculate basket number from vol using range table (fallback method).
+        
+        This method uses a range table similar to the one used in n8n workflow.
+        Used as fallback when main formula doesn't work.
+        
+        Args:
+            vol: First 3-4 digits of article_id (volNumber)
+            
+        Returns:
+            Basket number (1-38, converted to 0-37 for internal use)
+        """
+        # Range table from JSON workflow
+        if vol >= 0 and vol <= 143:
+            return 1
+        elif vol <= 287:
+            return 2
+        elif vol <= 431:
+            return 3
+        elif vol <= 719:
+            return 4
+        elif vol <= 1007:
+            return 5
+        elif vol <= 1061:
+            return 6
+        elif vol <= 1115:
+            return 7
+        elif vol <= 1169:
+            return 8
+        elif vol <= 1313:
+            return 9
+        elif vol <= 1601:
+            return 10
+        elif vol <= 1655:
+            return 11
+        elif vol <= 1919:
+            return 12
+        elif vol <= 2045:
+            return 13
+        elif vol <= 2189:
+            return 14
+        elif vol <= 2405:
+            return 15
+        elif vol <= 2621:
+            return 16
+        elif vol <= 2837:
+            return 17
+        elif vol <= 3053:
+            return 18
+        elif vol <= 3269:
+            return 19
+        elif vol <= 3485:
+            return 20
+        elif vol <= 3701:
+            return 21
+        elif vol <= 3917:
+            return 22
+        elif vol <= 4133:
+            return 23
+        elif vol <= 4349:
+            return 24
+        elif vol <= 4565:
+            return 25
+        elif vol <= 4877:
+            return 26
+        elif vol <= 5189:
+            return 27
+        elif vol <= 5501:
+            return 28
+        elif vol <= 5813:
+            return 29
+        elif vol <= 6125:
+            return 30
+        elif vol <= 6437:
+            return 31
+        elif vol <= 6749:
+            return 32
+        elif vol <= 7061:
+            return 33
+        elif vol <= 7373:
+            return 34
+        elif vol <= 7685:
+            return 35
+        elif vol <= 7997:
+            return 36
+        elif vol <= 8309:
+            return 37
+        else:
+            return 38
+
     def _build_card_url(self, article_id: int) -> str:
         """
         Build URL for product card JSON from article ID.
@@ -791,6 +882,17 @@ class WBParserService:
                 if 0 <= neighbor_basket <= 99:
                     if neighbor_basket not in basket_numbers_to_try:
                         basket_numbers_to_try.append(neighbor_basket)
+            
+            # Add range-based basket number as additional fallback (from JSON workflow formula)
+            range_basket = self._calculate_basket_number_by_ranges(vol)
+            if range_basket not in basket_numbers_to_try:
+                basket_numbers_to_try.append(range_basket)
+                logger.info(
+                    "basket_range_fallback_added",
+                    article_id=article_id,
+                    vol=vol,
+                    range_basket=range_basket
+                )
         
         logger.info(
             "basket_numbers_to_try",
