@@ -43,6 +43,12 @@ class Config:
     # Service
     SERVICE_PORT: int = int(os.getenv("SERVICE_PORT", "8444"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    
+    # Daily Report
+    REPORT_CHAT_ID: str = os.getenv("REPORT_CHAT_ID", "")
+    
+    # Notifications
+    NOTIFICATION_CHAT_ID: str = os.getenv("NOTIFICATION_CHAT_ID", "")
 
 
 config = Config()

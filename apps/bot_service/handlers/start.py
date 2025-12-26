@@ -970,7 +970,8 @@ async def _poll_calculation_result(bot: Bot, redis_client: RedisClient, calculat
     """
     from apps.bot_service.services.result_notifier import ResultNotifier
     
-    notifier = ResultNotifier(bot, redis_client)
+    db_client = get_db_client()
+    notifier = ResultNotifier(bot, redis_client, db_client)
     
     for attempt in range(max_attempts):
         try:

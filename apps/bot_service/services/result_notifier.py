@@ -6,6 +6,8 @@ from typing import Optional, Dict, Any
 import structlog
 
 from apps.bot_service.clients.redis import RedisClient
+from apps.bot_service.clients.database import DatabaseClient
+from apps.bot_service.config import config
 from aiogram import Bot
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -73,19 +75,102 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     return keyboard
 
 
+async def send_notification(bot: Bot, username: Optional[str], status: str, article_id: int):
+    """
+    Send notification to notification group in format: @username | Статус: 🟢 | WB: артикул
+    
+    Args:
+        bot: Telegram Bot instance
+        username: Telegram username (without @)
+        status: Status emoji (🟢, 🟡, 🟠, 🔴)
+        article_id: WB article ID
+    """
+    if not config.NOTIFICATION_CHAT_ID:
+        return
+    
+    try:
+        # Format username
+        username_str = f"@{username}" if username else "без username"
+        
+        # Format notification message
+        notification_text = f"{username_str} | Статус: {status} | WB: {article_id}"
+        
+        await bot.send_message(
+            chat_id=config.NOTIFICATION_CHAT_ID,
+            text=notification_text
+        )
+        
+        logger.info(
+            "notification_sent",
+            username=username,
+            status=status,
+            article_id=article_id
+        )
+    except Exception as e:
+        logger.error(
+            "notification_send_failed",
+            username=username,
+            status=status,
+            article_id=article_id,
+            error=str(e)
+        )
+
+
 class ResultNotifier:
     """Service for checking calculation results and notifying users."""
 
-    def __init__(self, bot: Bot, redis_client: RedisClient):
+    def __init__(self, bot: Bot, redis_client: RedisClient, db_client: DatabaseClient = None):
         """
         Initialize result notifier.
 
         Args:
             bot: Telegram Bot instance
             redis_client: Redis client
+            db_client: Database client (optional, for getting username)
         """
         self.bot = bot
         self.redis = redis_client
+        self.db_client = db_client
+    
+    async def _get_username(self, user_id: int) -> Optional[str]:
+        """Get username from database or return None."""
+        if not self.db_client:
+            return None
+        
+        try:
+            from sqlalchemy import select
+            from apps.bot_service.clients.database import User
+            
+            session = await self.db_client.get_session()
+            try:
+                result = await session.execute(
+                    select(User).where(User.user_id == user_id)
+                )
+                user = result.scalar_one_or_none()
+                return user.username if user else None
+            finally:
+                await session.close()
+        except Exception as e:
+            logger.warning("username_fetch_failed", user_id=user_id, error=str(e))
+            return None
+    
+    async def _get_article_id_from_result(self, result: Dict[str, Any]) -> Optional[int]:
+        """Extract article_id from result."""
+        # Try to get from product_data
+        product_data = result.get("product_data")
+        if product_data:
+            article_id = product_data.get("nm_id") or product_data.get("id")
+            if article_id:
+                return article_id
+        
+        # Try to get from input_data
+        input_data = result.get("input_data")
+        if input_data:
+            article_id = input_data.get("article_id")
+            if article_id:
+                return article_id
+        
+        return None
 
     async def check_and_notify(self, calculation_id: str, user_id: int, status_message_id: int) -> bool:
         """
@@ -316,6 +401,15 @@ class ResultNotifier:
                 calculation_id=result.get("calculation_id"),
                 tn_ved_code=result.get("tn_ved_code", "N/A")
             )
+            
+            # Send notification about express calculation result
+            article_id = await self._get_article_id_from_result(result)
+            if article_id:
+                username = await self._get_username(user_id)
+                try:
+                    await send_notification(self.bot, username, "🔴", article_id)
+                except Exception as e:
+                    logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
         
         elif status == "orange_zone" or status == "🟠":
             # Orange zone blocked
@@ -357,6 +451,15 @@ class ResultNotifier:
                 user_id=user_id,
                 calculation_id=result.get("calculation_id")
             )
+            
+            # Send notification about express calculation result
+            article_id = await self._get_article_id_from_result(result)
+            if article_id:
+                username = await self._get_username(user_id)
+                try:
+                    await send_notification(self.bot, username, "🟠", article_id)
+                except Exception as e:
+                    logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
         
         elif (status == "completed" or status in ("🟢", "🟡")) and calculation_type != "detailed":
             # Express assessment completed (🟢 or 🟡) - but not detailed calculation
@@ -412,6 +515,17 @@ class ResultNotifier:
                 calculation_id=result.get("calculation_id"),
                 assessment_status=status
             )
+            
+            # Send notification about express calculation result
+            article_id = await self._get_article_id_from_result(result)
+            if article_id:
+                username = await self._get_username(user_id)
+                # Use assessment_status if available, otherwise use status
+                notification_status = result.get("assessment_status") or status
+                try:
+                    await send_notification(self.bot, username, notification_status, article_id)
+                except Exception as e:
+                    logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
         
         elif status == "failed":
             # Calculation failed - show white status instead of error
@@ -428,6 +542,15 @@ class ResultNotifier:
                 user_id=user_id,
                 calculation_id=result.get("calculation_id")
             )
+            
+            # Send notification about express calculation result
+            article_id = await self._get_article_id_from_result(result)
+            if article_id:
+                username = await self._get_username(user_id)
+                try:
+                    await send_notification(self.bot, username, "⚪️", article_id)
+                except Exception as e:
+                    logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
 
     async def start_polling(self, check_interval: float = 2.0):
         """
