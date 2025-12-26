@@ -712,7 +712,7 @@ class WBParserService:
         
         return f"https://basket-{basket_num}.wbbasket.ru/vol{vol}/part{part}/{article_id}/info/ru/card.json"
 
-    async def fetch_product_card_data(self, article_id: int, basket_num: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    async def fetch_product_card_data(self, article_id: int, basket_num: Optional[int] = None) -> Optional[tuple[Dict[str, Any], Dict[str, int]]]:
         """
         Fetch product card data from basket-*.wbbasket.ru API.
         Basket number is calculated automatically using formula based on article_id.
@@ -723,7 +723,8 @@ class WBParserService:
             basket_num: Optional basket number to use directly (skip fallback)
             
         Returns:
-            Product card JSON data or None on error
+            Tuple of (Product card JSON data, basket_info dict) or None on error.
+            basket_info contains: {"calculated": calculated_basket, "actual": actual_basket}
         """
         # Extract vol and part for URL building
         article_str = str(article_id)
@@ -785,14 +786,20 @@ class WBParserService:
                             
                             if status == 200:
                                 data = await response.json()
+                                basket_info = {
+                                    "calculated": initial_basket,
+                                    "actual": basket_num
+                                }
                                 logger.info(
                                     "wb_card_api_fetch_success",
                                     article_id=article_id,
                                     basket_num=basket_num,
                                     attempt=attempt + 1,
-                                    used_fallback=(basket_num != initial_basket)
+                                    used_fallback=(basket_num != initial_basket),
+                                    calculated_basket=initial_basket,
+                                    actual_basket=basket_num
                                 )
-                                return data
+                                return data, basket_info
                             
                             # If 404, try next basket number (don't retry same basket)
                             if status == 404:

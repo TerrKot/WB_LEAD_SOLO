@@ -39,6 +39,8 @@ class Calculation(Base):
     express_result = Column(JSONB, nullable=True)
     detailed_result = Column(JSONB, nullable=True)
     status = Column(String(10), nullable=False)
+    calculated_basket = Column(Integer, nullable=True)  # Calculated basket number
+    actual_basket = Column(Integer, nullable=True)  # Actual working basket number
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
 
     __table_args__ = (
@@ -168,7 +170,9 @@ class DatabaseClient:
         status: str,
         tn_ved_code: Optional[str] = None,
         express_result: Optional[Dict[str, Any]] = None,
-        detailed_result: Optional[Dict[str, Any]] = None
+        detailed_result: Optional[Dict[str, Any]] = None,
+        calculated_basket: Optional[int] = None,
+        actual_basket: Optional[int] = None
     ) -> None:
         """
         Save or update calculation result to database.
@@ -204,6 +208,10 @@ class DatabaseClient:
                         existing_calc.status = status
                     if tn_ved_code is not None:
                         existing_calc.tn_ved_code = tn_ved_code
+                    if calculated_basket is not None:
+                        existing_calc.calculated_basket = calculated_basket
+                    if actual_basket is not None:
+                        existing_calc.actual_basket = actual_basket
                     logger.debug("calculation_updated", calculation_id=calculation_id, user_id=user_id, article_id=article_id)
                 else:
                     # Create new calculation
@@ -215,7 +223,9 @@ class DatabaseClient:
                         tn_ved_code=tn_ved_code,
                         express_result=express_result,
                         detailed_result=detailed_result,
-                        status=status
+                        status=status,
+                        calculated_basket=calculated_basket,
+                        actual_basket=actual_basket
                     )
                     session.add(calculation)
                     logger.debug("calculation_saved", calculation_id=calculation_id, user_id=user_id, article_id=article_id)

@@ -198,6 +198,7 @@ class CalculationWorker:
                 try:
                     # Try to get card_data from Redis first (already fetched in handler)
                     card_data_json = await self.redis.get(f"calculation:{calculation_id}:card_data")
+                    basket_info = None
                     if card_data_json:
                         try:
                             card_data = json.loads(card_data_json)
@@ -206,6 +207,13 @@ class CalculationWorker:
                                 calculation_id=calculation_id,
                                 article_id=article_id
                             )
+                            # Try to get basket_info from Redis as well
+                            basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
+                            if basket_info_json:
+                                try:
+                                    basket_info = json.loads(basket_info_json)
+                                except json.JSONDecodeError:
+                                    pass
                         except json.JSONDecodeError as e:
                             logger.warning(
                                 "card_data_json_decode_error",
@@ -216,7 +224,16 @@ class CalculationWorker:
                     
                     # If not in Redis, fetch from basket API
                     if not card_data:
-                        card_data = await self.wb_parser.fetch_product_card_data(article_id)
+                        result = await self.wb_parser.fetch_product_card_data(article_id)
+                        if result:
+                            card_data, basket_info = result
+                            # Save basket info to Redis for later use
+                            if basket_info:
+                                await self.redis.setex(
+                                    f"calculation:{calculation_id}:basket_info",
+                                    3600,  # 1 hour TTL
+                                    json.dumps(basket_info)
+                                )
                     
                     if card_data:
                         # Extract subject_id from card data for category API
@@ -400,6 +417,15 @@ class CalculationWorker:
                     try:
                         article_id = product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id') or data.get('article_id')
                         if article_id:
+                            # Get basket info from Redis if available
+                            basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
+                            basket_info = None
+                            if basket_info_json:
+                                try:
+                                    basket_info = json.loads(basket_info_json)
+                                except json.JSONDecodeError:
+                                    pass
+                            
                             await self.db_client.save_calculation(
                                 calculation_id=calculation_id,
                                 user_id=user_id,
@@ -407,7 +433,9 @@ class CalculationWorker:
                                 calculation_type="express",
                                 status="🔴",
                                 tn_ved_code=None,
-                                express_result=result
+                                express_result=result,
+                                calculated_basket=basket_info.get("calculated") if basket_info else None,
+                                actual_basket=basket_info.get("actual") if basket_info else None
                             )
                     except Exception as e:
                         logger.warning("calculation_db_save_failed", calculation_id=calculation_id, error=str(e))
@@ -543,6 +571,15 @@ class CalculationWorker:
                     try:
                         article_id = product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id') or data.get('article_id')
                         if article_id:
+                            # Get basket info from Redis if available
+                            basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
+                            basket_info = None
+                            if basket_info_json:
+                                try:
+                                    basket_info = json.loads(basket_info_json)
+                                except json.JSONDecodeError:
+                                    pass
+                            
                             await self.db_client.save_calculation(
                                 calculation_id=calculation_id,
                                 user_id=user_id,
@@ -550,7 +587,9 @@ class CalculationWorker:
                                 calculation_type="express",
                                 status="🔴",
                                 tn_ved_code=tn_ved_data['tn_ved_code'],
-                                express_result=result
+                                express_result=result,
+                                calculated_basket=basket_info.get("calculated") if basket_info else None,
+                                actual_basket=basket_info.get("actual") if basket_info else None
                             )
                     except Exception as e:
                         logger.warning("calculation_db_save_failed", calculation_id=calculation_id, error=str(e))
@@ -665,6 +704,15 @@ class CalculationWorker:
                     try:
                         article_id = product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id') or data.get('article_id')
                         if article_id:
+                            # Get basket info from Redis if available
+                            basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
+                            basket_info = None
+                            if basket_info_json:
+                                try:
+                                    basket_info = json.loads(basket_info_json)
+                                except json.JSONDecodeError:
+                                    pass
+                            
                             await self.db_client.save_calculation(
                                 calculation_id=calculation_id,
                                 user_id=user_id,
@@ -672,7 +720,9 @@ class CalculationWorker:
                                 calculation_type="express",
                                 status="🟠",
                                 tn_ved_code=tn_ved_data['tn_ved_code'],
-                                express_result=result
+                                express_result=result,
+                                calculated_basket=basket_info.get("calculated") if basket_info else None,
+                                actual_basket=basket_info.get("actual") if basket_info else None
                             )
                     except Exception as e:
                         logger.warning("calculation_db_save_failed", calculation_id=calculation_id, error=str(e))
@@ -793,6 +843,15 @@ class CalculationWorker:
                 try:
                     article_id = product_with_filled_fields.get('nm_id') or data.get('article_id')
                     if article_id:
+                        # Get basket info from Redis if available
+                        basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
+                        basket_info = None
+                        if basket_info_json:
+                            try:
+                                basket_info = json.loads(basket_info_json)
+                            except json.JSONDecodeError:
+                                pass
+                        
                         await self.db_client.save_calculation(
                             calculation_id=calculation_id,
                             user_id=user_id,
@@ -800,7 +859,9 @@ class CalculationWorker:
                             calculation_type="express",
                             status=assessment_status,
                             tn_ved_code=tn_ved_data['tn_ved_code'],
-                            express_result=result
+                            express_result=result,
+                            calculated_basket=basket_info.get("calculated") if basket_info else None,
+                            actual_basket=basket_info.get("actual") if basket_info else None
                         )
                 except Exception as e:
                     logger.warning("calculation_db_save_failed", calculation_id=calculation_id, error=str(e))
@@ -996,6 +1057,15 @@ class CalculationWorker:
                         # Use original_calculation_id if available, otherwise use current calculation_id
                         db_calculation_id = original_calculation_id if original_calculation_id else calculation_id
                         
+                        # Get basket info from Redis if available
+                        basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
+                        basket_info = None
+                        if basket_info_json:
+                            try:
+                                basket_info = json.loads(basket_info_json)
+                            except json.JSONDecodeError:
+                                pass
+                        
                         await self.db_client.save_calculation(
                             calculation_id=db_calculation_id,
                             user_id=user_id,
@@ -1003,7 +1073,9 @@ class CalculationWorker:
                             calculation_type="detailed",  # Update type to detailed
                             status="completed",
                             tn_ved_code=tn_ved_code,
-                            detailed_result=result  # Add detailed result to existing calculation
+                            detailed_result=result,  # Add detailed result to existing calculation
+                            calculated_basket=basket_info.get("calculated") if basket_info else None,
+                            actual_basket=basket_info.get("actual") if basket_info else None
                         )
                 except Exception as e:
                     logger.warning("calculation_db_save_failed", calculation_id=calculation_id, error=str(e))

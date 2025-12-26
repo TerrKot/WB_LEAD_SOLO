@@ -648,14 +648,27 @@ async def handle_article_input(message: Message, state: FSMContext):
             calculation_id=calculation_id,
             article_id=article_id
         )
-        card_data = await wb_parser.fetch_product_card_data(article_id)
+        result = await wb_parser.fetch_product_card_data(article_id)
+        card_data = None
+        basket_info = None
+        if result:
+            card_data, basket_info = result
+            # Save basket info to Redis for later use
+            if basket_info:
+                await redis_client.redis.setex(
+                    f"calculation:{calculation_id}:basket_info",
+                    3600,  # 1 hour TTL
+                    json.dumps(basket_info)
+                )
         
         logger.info(
             "card_data_fetched",
             calculation_id=calculation_id,
             article_id=article_id,
             has_card_data=card_data is not None,
-            card_data_keys=list(card_data.keys()) if card_data else []
+            card_data_keys=list(card_data.keys()) if card_data else [],
+            calculated_basket=basket_info.get("calculated") if basket_info else None,
+            actual_basket=basket_info.get("actual") if basket_info else None
         )
         
         if card_data:
@@ -830,6 +843,13 @@ async def handle_article_input(message: Message, state: FSMContext):
             3600,  # 1 hour TTL
             json.dumps(card_data)
         )
+        # Save basket_info to Redis if available
+        if basket_info:
+            await redis_client.redis.setex(
+                f"calculation:{calculation_id}:basket_info",
+                3600,  # 1 hour TTL
+                json.dumps(basket_info)
+            )
     
     if category_data:
         await redis_client.redis.setex(
