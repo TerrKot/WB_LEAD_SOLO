@@ -50,21 +50,6 @@
     },
 
     {
-      "id": "MEDICAL_DEVICES",
-      "decision": "BLOCK",
-      "conditions": [
-        { "type": "prefix", "length": 4, "value": "9018" },
-        { "type": "prefix", "length": 4, "value": "9019" },
-        { "type": "prefix", "length": 4, "value": "9021" },
-        { "type": "prefix", "length": 4, "value": "9022" },
-        { "type": "prefix", "length": 4, "value": "9027" },
-        { "type": "prefix", "length": 4, "value": "3822" }
-      ],
-      "reason": "Медицинские изделия, приборы и диагностические тесты",
-      "legal_basis": "ТН ВЭД 9018–9027, 3822"
-    },
-
-    {
       "id": "COSMETICS_AND_HYGIENE",
       "decision": "BLOCK",
       "conditions": [{ "type": "prefix", "length": 2, "value": "33" }],
