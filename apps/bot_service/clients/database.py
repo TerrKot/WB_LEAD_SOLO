@@ -79,6 +79,10 @@ class DatabaseClient:
             # Create tables
             async with self.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+            
+            # Run migrations for new columns
+            await self._migrate_basket_columns()
+            
             # Test connection
             async with self.engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
@@ -86,6 +90,41 @@ class DatabaseClient:
         except Exception as e:
             logger.error("database_connection_failed", error=str(e))
             raise
+    
+    async def _migrate_basket_columns(self):
+        """Migrate basket columns if they don't exist."""
+        try:
+            async with self.engine.begin() as conn:
+                # Check if columns exist
+                check_query = text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'calculations' 
+                    AND column_name IN ('calculated_basket', 'actual_basket')
+                """)
+                result = await conn.execute(check_query)
+                existing_columns = {row[0] for row in result.fetchall()}
+                
+                # Add calculated_basket if not exists
+                if 'calculated_basket' not in existing_columns:
+                    alter_query1 = text("""
+                        ALTER TABLE calculations 
+                        ADD COLUMN calculated_basket INTEGER
+                    """)
+                    await conn.execute(alter_query1)
+                    logger.info("migration_calculated_basket_added")
+                
+                # Add actual_basket if not exists
+                if 'actual_basket' not in existing_columns:
+                    alter_query2 = text("""
+                        ALTER TABLE calculations 
+                        ADD COLUMN actual_basket INTEGER
+                    """)
+                    await conn.execute(alter_query2)
+                    logger.info("migration_actual_basket_added")
+        except Exception as e:
+            # Log but don't fail - migration errors shouldn't break app startup
+            logger.warning("migration_basket_columns_failed", error=str(e))
 
     async def disconnect(self):
         """Disconnect from database."""

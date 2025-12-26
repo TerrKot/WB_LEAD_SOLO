@@ -15,6 +15,7 @@ from apps.bot_service.config import config
 def fix_database_url_for_local(db_url: str) -> str:
     """
     Fix database URL for local execution (replace Docker hostname with localhost).
+    Only applies if running outside Docker (checking environment).
     
     Args:
         db_url: Original database URL
@@ -25,12 +26,17 @@ def fix_database_url_for_local(db_url: str) -> str:
     if not db_url:
         return db_url
     
-    # Replace Docker hostnames with localhost for local execution
-    docker_hostnames = ["bd_demo_postgres", "postgres"]
-    for hostname in docker_hostnames:
-        if hostname in db_url:
-            db_url = db_url.replace(hostname, "localhost")
-            break
+    # Only fix URL if running outside Docker (check if we're in Docker)
+    import os
+    is_docker = os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER') == 'true'
+    
+    if not is_docker:
+        # Replace Docker hostnames with localhost for local execution
+        docker_hostnames = ["bd_demo_postgres", "postgres"]
+        for hostname in docker_hostnames:
+            if hostname in db_url:
+                db_url = db_url.replace(hostname, "localhost")
+                break
     
     return db_url
 
