@@ -751,6 +751,13 @@ class GPTService:
         # 0% duty rate is valid - it means the code exists and has zero duty
         if duty_info and "duty_rate" in duty_info:
             result["is_valid"] = True
+        else:
+            logger.debug(
+                "candidate_code_invalid_duty_info",
+                code=code,
+                has_duty_info=bool(duty_info),
+                duty_info_keys=list(duty_info.keys()) if duty_info else []
+            )
         
         # Calculate match score using GPT
         if category_description:
@@ -861,7 +868,24 @@ class GPTService:
         ]
         
         if not valid_candidates:
-            logger.warning("no_valid_candidates_found", total_candidates=len(candidates))
+            # Log details about why candidates are invalid
+            invalid_reasons = []
+            for c in candidates:
+                reasons = []
+                if not c.get("exists"):
+                    reasons.append("not_exists_on_ifcg")
+                if not c.get("is_valid"):
+                    reasons.append("invalid_duty_info")
+                invalid_reasons.append({
+                    "code": c.get("code", "unknown"),
+                    "reasons": reasons,
+                    "match_score": c.get("match_score", 0.0)
+                })
+            logger.warning(
+                "no_valid_candidates_found",
+                total_candidates=len(candidates),
+                invalid_details=invalid_reasons
+            )
             return None
         
         # Sort by match_score (descending), then by duty_rate (descending, but exempt is special)
@@ -1577,8 +1601,9 @@ class GPTService:
             else:
                 logger.warning("gpt_tn_ved_card_stage3_no_valid_candidate", product_name=product_name, falling_back_to_type_classification=True)
                 # Fallback: classify product type and search by type
+                # Note: category_data is not available in stage3, pass None
                 return await self._get_tn_ved_code_by_product_type(
-                    card_data, category_data, product_name, wb_parser
+                    card_data, None, product_name, wb_parser
                 )
             
         except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
