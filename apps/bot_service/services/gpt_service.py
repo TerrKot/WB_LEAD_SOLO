@@ -1172,9 +1172,17 @@ class GPTService:
                 logger.warning("gpt_tn_ved_card_stage1_no_response", product_name=product_name, falling_back_to_stage2=True)
                 return await self._get_tn_ved_code_card_stage2(card_data, category_data, product_name, wb_parser)
             
+            # Log full response for debugging GPT-5
+            logger.debug("gpt_tn_ved_card_stage1_response", response_keys=list(response.keys()) if response else None, choices_count=len(response.get("choices", [])) if response else 0)
+            
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not content:
-                logger.warning("gpt_tn_ved_card_stage1_empty_content", product_name=product_name, falling_back_to_stage2=True)
+                logger.warning(
+                    "gpt_tn_ved_card_stage1_empty_content",
+                    product_name=product_name,
+                    falling_back_to_stage2=True,
+                    response_structure=str(response)[:500] if response else None
+                )
                 return await self._get_tn_ved_code_card_stage2(card_data, category_data, product_name, wb_parser)
             
             # Remove markdown code blocks
@@ -1322,7 +1330,12 @@ class GPTService:
             
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not content:
-                logger.warning("gpt_tn_ved_card_stage2_empty_content", product_name=product_name, falling_back_to_stage3=True)
+                logger.warning(
+                    "gpt_tn_ved_card_stage2_empty_content",
+                    product_name=product_name,
+                    falling_back_to_stage3=True,
+                    response_structure=str(response)[:500] if response else None
+                )
                 return await self._get_tn_ved_code_card_stage3(card_data, product_name, wb_parser)
             
             # Remove markdown code blocks
@@ -1467,7 +1480,11 @@ class GPTService:
             
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not content:
-                logger.error("gpt_tn_ved_card_stage3_empty_content", product_name=product_name)
+                logger.error(
+                    "gpt_tn_ved_card_stage3_empty_content",
+                    product_name=product_name,
+                    response_structure=str(response)[:500] if response else None
+                )
                 return None
             
             # Remove markdown code blocks
@@ -2542,18 +2559,19 @@ class GPTService:
                     "content": "Ты помощник для определения характеристик товаров. Отвечай только валидным JSON без дополнительных комментариев."
                 },
                 {"role": "user", "content": prompt}
-            ],
-            "response_format": {"type": "json_object"}  # Force JSON response
+            ]
         }
         
         # For GPT-5.x models use max_completion_tokens and don't set temperature (only default 1 is supported)
-        # For other models use max_tokens and temperature 0.3
+        # GPT-5 may not support response_format, so we'll request JSON in prompt instead
         if "gpt-5" in model_to_use:
             payload["max_completion_tokens"] = 200
             # GPT-5 only supports default temperature (1), don't set it
+            # GPT-5 may not support response_format, rely on prompt instructions
         else:
             payload["max_tokens"] = 200
             payload["temperature"] = 0.3
+            payload["response_format"] = {"type": "json_object"}  # Force JSON response
 
         timeout = aiohttp.ClientTimeout(total=30)
 
@@ -2573,7 +2591,13 @@ class GPTService:
                         return None
 
                     response_data = await resp.json()
-                    logger.debug("gpt_api_success", model=self.model)
+                    logger.debug(
+                        "gpt_api_success",
+                        model=model_to_use,
+                        has_choices=bool(response_data.get("choices")),
+                        choices_count=len(response_data.get("choices", [])),
+                        first_choice_keys=list(response_data.get("choices", [{}])[0].keys()) if response_data.get("choices") else []
+                    )
                     return response_data
 
         except aiohttp.ClientError as e:
