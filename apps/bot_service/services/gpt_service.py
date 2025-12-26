@@ -2563,9 +2563,10 @@ class GPTService:
         }
         
         # For GPT-5.x models use max_completion_tokens and don't set temperature (only default 1 is supported)
+        # GPT-5 uses reasoning tokens, so we need more tokens for the actual response
         # GPT-5 may not support response_format, so we'll request JSON in prompt instead
         if "gpt-5" in model_to_use:
-            payload["max_completion_tokens"] = 200
+            payload["max_completion_tokens"] = 1000  # Increased to allow reasoning + response
             # GPT-5 only supports default temperature (1), don't set it
             # GPT-5 may not support response_format, rely on prompt instructions
         else:
