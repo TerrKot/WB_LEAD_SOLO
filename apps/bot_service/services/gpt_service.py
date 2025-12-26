@@ -21,6 +21,7 @@ class GPTService:
         api_key: Optional[str] = None,
         api_url: Optional[str] = None,
         model: Optional[str] = None,
+        model_for_code: Optional[str] = None,
     ):
         """
         Initialize GPT Service.
@@ -29,10 +30,12 @@ class GPTService:
             api_key: OpenAI API key (defaults to config.GPT_API_KEY)
             api_url: GPT API URL (defaults to config.GPT_API_URL)
             model: GPT model name (defaults to config.GPT_MODEL)
+            model_for_code: GPT model name for code selection (defaults to config.GPT_MODEL_FOR_CODE)
         """
         self.api_key = api_key or config.GPT_API_KEY
         self.api_url = api_url or config.GPT_API_URL
         self.model = model or config.GPT_MODEL
+        self.model_for_code = model_for_code or config.GPT_MODEL_FOR_CODE
 
         if not self.api_key:
             raise ValueError("GPT_API_KEY is required")
@@ -968,7 +971,7 @@ class GPTService:
 
         try:
             # Первая попытка с минимальными данными
-            response = await self._call_gpt_api(prompt_stage1)
+            response = await self._call_gpt_api(prompt_stage1, model=self.model_for_code)
             if not response:
                 logger.warning("gpt_tn_ved_stage1_no_response", product_name=product_name, falling_back_to_full_data=True)
                 # Переходим к полным данным
@@ -1164,7 +1167,7 @@ class GPTService:
 }}"""
         
         try:
-            response = await self._call_gpt_api(prompt_stage1)
+            response = await self._call_gpt_api(prompt_stage1, model=self.model_for_code)
             if not response:
                 logger.warning("gpt_tn_ved_card_stage1_no_response", product_name=product_name, falling_back_to_stage2=True)
                 return await self._get_tn_ved_code_card_stage2(card_data, category_data, product_name, wb_parser)
@@ -1312,7 +1315,7 @@ class GPTService:
 }}"""
         
         try:
-            response = await self._call_gpt_api(prompt_stage2)
+            response = await self._call_gpt_api(prompt_stage2, model=self.model_for_code)
             if not response:
                 logger.warning("gpt_tn_ved_card_stage2_no_response", product_name=product_name, falling_back_to_stage3=True)
                 return await self._get_tn_ved_code_card_stage3(card_data, product_name, wb_parser)
@@ -1457,7 +1460,7 @@ class GPTService:
 }}"""
         
         try:
-            response = await self._call_gpt_api(prompt_stage3)
+            response = await self._call_gpt_api(prompt_stage3, model=self.model_for_code)
             if not response:
                 logger.error("gpt_tn_ved_card_stage3_no_response", product_name=product_name)
                 return None
@@ -1632,7 +1635,7 @@ class GPTService:
         
         try:
             # Get product type classification from GPT
-            response = await self._call_gpt_api(prompt)
+            response = await self._call_gpt_api(prompt, model=self.model_for_code)
             if not response:
                 logger.warning("gpt_type_classification_no_response", product_name=product_name)
                 return None
@@ -1680,7 +1683,7 @@ class GPTService:
     ]
 }}"""
             
-            search_response = await self._call_gpt_api(search_prompt)
+            search_response = await self._call_gpt_api(search_prompt, model=self.model_for_code)
             if not search_response:
                 logger.warning("gpt_tn_ved_search_by_type_no_response", product_name=product_name)
                 return None
@@ -1925,7 +1928,7 @@ class GPTService:
 }}"""
 
         try:
-            response = await self._call_gpt_api(prompt)
+            response = await self._call_gpt_api(prompt, model=self.model_for_code)
             if not response:
                 logger.error("gpt_tn_ved_full_data_no_response", product_name=product_name)
                 return None
@@ -2513,12 +2516,13 @@ class GPTService:
             )
             return None
 
-    async def _call_gpt_api(self, prompt: str) -> Optional[Dict[str, Any]]:
+    async def _call_gpt_api(self, prompt: str, model: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Call GPT API.
 
         Args:
             prompt: User prompt
+            model: Optional model name (defaults to self.model)
 
         Returns:
             API response JSON or None on error
@@ -2528,8 +2532,10 @@ class GPTService:
             "Content-Type": "application/json"
         }
 
+        model_to_use = model or self.model
+        
         payload = {
-            "model": self.model,
+            "model": model_to_use,
             "messages": [
                 {
                     "role": "system",
@@ -2542,7 +2548,7 @@ class GPTService:
         }
         
         # For GPT-5.x models use max_completion_tokens, for others use max_tokens
-        if "gpt-5" in self.model:
+        if "gpt-5" in model_to_use:
             payload["max_completion_tokens"] = 200
         else:
             payload["max_tokens"] = 200

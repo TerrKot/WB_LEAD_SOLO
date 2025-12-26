@@ -18,6 +18,7 @@ class Config:
     GPT_API_KEY: str = os.getenv("GPT_API_KEY", "")
     GPT_API_URL: str = os.getenv("GPT_API_URL", "https://api.openai.com/v1/chat/completions")
     GPT_MODEL: str = os.getenv("GPT_MODEL", "gpt-4o")
+    GPT_MODEL_FOR_CODE: str = os.getenv("GPT_MODEL_FOR_CODE", "gpt-5")
 
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
