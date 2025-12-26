@@ -842,6 +842,29 @@ class WBParserService:
                             
                 except aiohttp.ClientError as e:
                     error_type = ErrorHandler.classify_wb_error(e)
+                    error_str = str(e).lower()
+                    
+                    # For DNS/connection errors (Name or service not known, Cannot connect to host),
+                    # don't retry - immediately try next basket server
+                    is_dns_error = any(phrase in error_str for phrase in [
+                        "name or service not known",
+                        "cannot connect to host",
+                        "nodename nor servname provided",
+                        "temporary failure in name resolution"
+                    ])
+                    
+                    if is_dns_error:
+                        logger.warning(
+                            "wb_card_api_dns_error_skip_retry",
+                            error_type=error_type,
+                            error=str(e)[:200],
+                            article_id=article_id,
+                            basket_num=basket_num
+                        )
+                        # Skip retries, try next basket immediately
+                        break
+                    
+                    # For other connection errors, retry
                     if attempt < self.max_retries - 1:
                         logger.warning(
                             "wb_card_api_request_error_retrying",
