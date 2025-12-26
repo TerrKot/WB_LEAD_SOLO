@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text, Column, BigInteger, String, DateTime, JSON, CheckConstraint
+from sqlalchemy import text, Column, BigInteger, Integer, String, DateTime, JSON, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
 import structlog
