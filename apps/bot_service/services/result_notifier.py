@@ -361,6 +361,10 @@ class ResultNotifier:
             result: Calculation result
         """
         status = result.get("status")
+        assessment_status = result.get("assessment_status")
+        # Use assessment_status if available, otherwise use status
+        # This ensures we correctly identify 🟠 status even if status field is different
+        effective_status = assessment_status or status
         calculation_id = result.get("calculation_id")
         
         logger.info(
@@ -368,7 +372,8 @@ class ResultNotifier:
             user_id=user_id,
             calculation_id=calculation_id,
             status=status,
-            assessment_status=result.get("assessment_status"),
+            assessment_status=assessment_status,
+            effective_status=effective_status,
             calculation_type=result.get("calculation_type"),
             result_keys=list(result.keys())
         )
@@ -519,10 +524,22 @@ class ResultNotifier:
                     has_product_data=bool(result.get("product_data")) if result else False
                 )
         
-        elif status == "orange_zone" or status == "🟠":
+        elif effective_status == "orange_zone" or effective_status == "🟠" or status == "orange_zone" or status == "🟠":
             # Orange zone blocked
+            logger.info(
+                "orange_zone_result_processing",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                status=status,
+                effective_status=effective_status,
+                assessment_status=assessment_status
+            )
             message_text = result.get("message", "🟠 Экспресс-расчёт завершён")
             message_text = clean_html_for_telegram(message_text)
+            
+            # Ensure message is not empty after cleaning
+            if not message_text or not message_text.strip():
+                message_text = "🟠 Экспресс-расчёт завершён"
             
             # Add button for detailed calculation
             inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -540,33 +557,79 @@ class ResultNotifier:
                 ]
             ])
             
-            # Send message with inline keyboard
-            await self.bot.send_message(
-                chat_id=user_id,
-                text=message_text,
-                parse_mode="HTML",
-                reply_markup=inline_keyboard
-            )
-            # Send reply keyboard in a separate minimal message to ensure it's always visible
-            await self.bot.send_message(
-                chat_id=user_id,
-                text="\u200B",  # Zero-width space (invisible)
-                reply_markup=main_keyboard
-            )
-            
-            logger.info(
-                "orange_zone_notification_sent",
-                user_id=user_id,
-                calculation_id=result.get("calculation_id")
-            )
+            # Send message with inline keyboard - wrap in try-except to ensure notification is sent even if user message fails
+            try:
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
+                    parse_mode="HTML",
+                    reply_markup=inline_keyboard
+                )
+                # Send reply keyboard in a separate minimal message to ensure it's always visible
+                try:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text="\u200B",  # Zero-width space (invisible)
+                        reply_markup=main_keyboard
+                    )
+                except Exception as e:
+                    # If zero-width space fails, try with a space
+                    logger.warning("zero_width_message_failed", user_id=user_id, error=str(e))
+                    try:
+                        await self.bot.send_message(
+                            chat_id=user_id,
+                            text=" ",  # Regular space as fallback
+                            reply_markup=main_keyboard
+                        )
+                    except Exception:
+                        # If even space fails, log and continue - notification to group is more important
+                        logger.warning("reply_keyboard_send_failed", user_id=user_id)
+                
+                logger.info(
+                    "orange_zone_notification_sent",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id")
+                )
+            except Exception as e:
+                logger.error(
+                    "orange_zone_user_message_send_failed",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id"),
+                    error=str(e),
+                    message_text_length=len(message_text) if message_text else 0
+                )
+                # Continue to send notification even if user message failed
             
             # Send notification about express calculation result
+            # This should always execute, even if user message failed
             article_id = await self._get_article_id_from_result(result)
+            logger.info(
+                "orange_zone_notification_check",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                article_id=article_id,
+                has_article_id=bool(article_id),
+                result_keys=list(result.keys()) if result else [],
+                has_product_data=bool(result.get("product_data")) if result else False
+            )
             if article_id:
                 username = await self._get_username(user_id)
                 tn_ved_code = result.get("tn_ved_code")
+                logger.info(
+                    "sending_orange_zone_notification",
+                    user_id=user_id,
+                    article_id=article_id,
+                    username=username,
+                    tn_ved_code=tn_ved_code
+                )
                 try:
                     await send_notification(self.bot, username, "🟠", article_id, tn_ved_code)
+                    logger.info(
+                        "orange_zone_notification_sent_to_group",
+                        user_id=user_id,
+                        article_id=article_id,
+                        username=username
+                    )
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
             else:
@@ -712,9 +775,19 @@ class ResultNotifier:
                     product_data_keys=list(result.get("product_data", {}).keys()) if result.get("product_data") else []
                 )
         
-        elif status == "failed":
+        elif status == "failed" or effective_status == "failed" or effective_status == "⚪️" or status == "⚪️":
             # Calculation failed - show white status instead of error
-            message_text = "⚪️ Нужно больше данных — данная категория пока не включена в наш реестр и не может быть отработана, доджитесь ближайшего обновления."
+            logger.info(
+                "failed_result_processing",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                status=status,
+                effective_status=effective_status,
+                assessment_status=assessment_status,
+                error=result.get("error")
+            )
+            # Use message from result if available (e.g., for price_missing case), otherwise use default
+            message_text = result.get("message") or "⚪️ Нужно больше данных — данная категория пока не включена в наш реестр и не может быть отработана, доджитесь ближайшего обновления."
             
             await self.bot.send_message(
                 chat_id=user_id,
@@ -730,11 +803,33 @@ class ResultNotifier:
             
             # Send notification about express calculation result
             article_id = await self._get_article_id_from_result(result)
+            logger.info(
+                "failed_notification_check",
+                user_id=user_id,
+                calculation_id=result.get("calculation_id"),
+                article_id=article_id,
+                has_article_id=bool(article_id),
+                result_keys=list(result.keys()) if result else [],
+                has_product_data=bool(result.get("product_data")) if result else False
+            )
             if article_id:
                 username = await self._get_username(user_id)
                 tn_ved_code = result.get("tn_ved_code")
+                logger.info(
+                    "sending_failed_notification",
+                    user_id=user_id,
+                    article_id=article_id,
+                    username=username,
+                    tn_ved_code=tn_ved_code
+                )
                 try:
                     await send_notification(self.bot, username, "⚪️", article_id, tn_ved_code)
+                    logger.info(
+                        "failed_notification_sent_to_group",
+                        user_id=user_id,
+                        article_id=article_id,
+                        username=username
+                    )
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
             else:

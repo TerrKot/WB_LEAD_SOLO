@@ -149,6 +149,46 @@ class CalculationWorker:
             if not is_valid:
                 # Fields validation failed
                 user_id = data.get("user_id")
+                
+                # Special handling for missing price - product is out of stock
+                if "price" in missing_fields:
+                    error_message = "⚪️ Товар отсутствует в наличии — мы не видим цену товара, а без цены расчёт невозможен."
+                    result = {
+                        "status": "⚪️",
+                        "calculation_id": calculation_id,
+                        "user_id": user_id,
+                        "error": "price_missing",
+                        "missing_fields": missing_fields,
+                        "message": error_message,
+                        "calculation_type": "express"
+                    }
+                    
+                    # Get article_id for notification
+                    article_id = data.get('article_id') or product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id')
+                    if article_id:
+                        result["article_id"] = article_id
+                    if data.get("input_data"):
+                        result["input_data"] = data.get("input_data")
+                    if product_with_filled_fields:
+                        result["product_data"] = product_with_filled_fields
+                    
+                    await self.redis.setex(
+                        f"calculation:{calculation_id}:result",
+                        86400,  # 24 hours TTL
+                        json.dumps(result)
+                    )
+                    await self.redis.set(f"calculation:{calculation_id}:status", "failed")
+                    
+                    log_event(
+                        "calculation_price_missing",
+                        calculation_id=calculation_id,
+                        user_id=user_id,
+                        level="warning",
+                        article_id=article_id
+                    )
+                    return
+                
+                # Other missing fields - use generic error message
                 error_message = ErrorHandler.get_user_message_for_calculation_error("fields_validation")
                 result = {
                     "status": "failed",

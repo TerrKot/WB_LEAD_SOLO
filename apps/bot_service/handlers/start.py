@@ -602,13 +602,38 @@ async def handle_article_input(message: Message, state: FSMContext):
         except Exception:
             pass
         
+        # Product not found - treat as out of stock (no price available)
+        error_message = "⚪️ Товар отсутствует в наличии — мы не видим цену товара, а без цены расчёт невозможен."
+        
+        # Create result with ⚪️ status for notification
+        from apps.bot_service.services.result_notifier import send_notification
+        
+        result = {
+            "status": "⚪️",
+            "calculation_id": calculation_id,
+            "user_id": user_id,
+            "error": "product_not_found",
+            "message": error_message,
+            "calculation_type": "express"
+        }
+        
+        # Add article_id for notification
+        if article_id:
+            result["article_id"] = article_id
+        if state_data.get("input_data"):
+            result["input_data"] = state_data.get("input_data")
+        
+        # Save result to Redis
+        await redis_client.set_calculation_result(calculation_id, result, ttl=86400)
+        await redis_client.set_calculation_status(calculation_id, "failed")
+        
         # Edit product info message with not found
-        error_message = ErrorHandler.get_user_message_for_wb_error("not_found", article_id)
         await message.bot.edit_message_text(
             chat_id=user_id,
             message_id=product_info_message_id,
             text=error_message
         )
+        
         log_event(
             "product_not_found",
             calculation_id=calculation_id,
@@ -616,6 +641,39 @@ async def handle_article_input(message: Message, state: FSMContext):
             level="warning",
             article_id=article_id
         )
+        
+        # Send notification to group
+        if article_id:
+            try:
+                # Get username from database
+                db_client = get_db_client()
+                username = None
+                if db_client:
+                    try:
+                        from sqlalchemy import select
+                        session = await db_client.get_session()
+                        try:
+                            result_db = await session.execute(
+                                select(User).where(User.user_id == user_id)
+                            )
+                            user = result_db.scalar_one_or_none()
+                            username = user.username if user else None
+                        finally:
+                            await session.close()
+                    except Exception as e:
+                        logger.warning("username_fetch_failed_for_notification", user_id=user_id, error=str(e))
+                
+                # Use message.bot for sending notification
+                await send_notification(message.bot, username, "⚪️", article_id, None)
+                logger.info(
+                    "product_not_found_notification_sent",
+                    user_id=user_id,
+                    article_id=article_id,
+                    username=username
+                )
+            except Exception as e:
+                logger.warning("product_not_found_notification_failed", user_id=user_id, article_id=article_id, error=str(e))
+        
         # Clear FSM state to allow new request
         await state.clear()
         # Send reply keyboard for new request
