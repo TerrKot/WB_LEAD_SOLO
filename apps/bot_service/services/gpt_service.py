@@ -2543,15 +2543,17 @@ class GPTService:
                 },
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.3,
             "response_format": {"type": "json_object"}  # Force JSON response
         }
         
-        # For GPT-5.x models use max_completion_tokens, for others use max_tokens
+        # For GPT-5.x models use max_completion_tokens and don't set temperature (only default 1 is supported)
+        # For other models use max_tokens and temperature 0.3
         if "gpt-5" in model_to_use:
             payload["max_completion_tokens"] = 200
+            # GPT-5 only supports default temperature (1), don't set it
         else:
             payload["max_tokens"] = 200
+            payload["temperature"] = 0.3
 
         timeout = aiohttp.ClientTimeout(total=30)
 
