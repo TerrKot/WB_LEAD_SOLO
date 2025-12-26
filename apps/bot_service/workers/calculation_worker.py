@@ -399,6 +399,7 @@ class CalculationWorker:
                     "status": "blocked",
                     "calculation_id": calculation_id,
                     "user_id": user_id,
+                    "calculation_type": "express",
                     "fields_validated": True,
                     "tn_ved_selected": False,  # Код ТН ВЭД не был подобран
                     "forbidden_category": category,
@@ -564,6 +565,7 @@ class CalculationWorker:
                     "status": "blocked",
                     "calculation_id": calculation_id,
                     "user_id": user_id,
+                    "calculation_type": "express",
                     "fields_validated": True,
                     "tn_ved_selected": True,
                     "tn_ved_code": tn_ved_data['tn_ved_code'],
@@ -700,6 +702,7 @@ class CalculationWorker:
                     "status": "🟠",
                     "calculation_id": calculation_id,
                     "user_id": user_id,
+                    "calculation_type": "express",
                     "fields_validated": True,
                     "tn_ved_selected": True,
                     "tn_ved_code": tn_ved_data['tn_ved_code'],
@@ -794,6 +797,7 @@ class CalculationWorker:
                     "status": "failed",
                     "calculation_id": calculation_id,
                     "user_id": user_id,
+                    "calculation_type": "express",
                     "error": "specific_value_calculation_failed",
                     "message": error_message,
                     "product_data": product_with_filled_fields
@@ -856,6 +860,7 @@ class CalculationWorker:
                 "status": assessment_status,
                 "calculation_id": calculation_id,
                 "user_id": user_id,
+                "calculation_type": "express",  # Mark as express calculation
                 "fields_validated": True,
                 "tn_ved_selected": True,
                 "tn_ved_code": tn_ved_data['tn_ved_code'],

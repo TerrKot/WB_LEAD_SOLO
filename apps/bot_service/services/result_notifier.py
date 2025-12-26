@@ -532,7 +532,7 @@ class ResultNotifier:
                     has_product_data=bool(result.get("product_data")) if result else False
                 )
         
-        elif (status == "completed" or status in ("🟢", "🟡")) and calculation_type != "detailed":
+        elif (status == "completed" or status in ("🟢", "🟡")) and result.get("calculation_type") != "detailed":
             # Express assessment completed (🟢 or 🟡) - but not detailed calculation
             logger.info(
                 "express_result_processing",
