@@ -82,10 +82,11 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
     Args:
         bot: Telegram Bot instance
         username: Telegram username (without @)
-        status: Status emoji (🟢, 🟡, 🟠, 🔴)
+        status: Status emoji (🟢, 🟡, 🟠, 🔴, ⚪️)
         article_id: WB article ID
     """
     if not config.NOTIFICATION_CHAT_ID:
+        logger.debug("notification_skipped_no_chat_id", article_id=article_id, status=status)
         return
     
     try:
@@ -94,6 +95,15 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
         
         # Format notification message
         notification_text = f"{username_str} | Статус: {status} | WB: {article_id}"
+        
+        logger.info(
+            "notification_sending",
+            username=username,
+            status=status,
+            article_id=article_id,
+            chat_id=config.NOTIFICATION_CHAT_ID,
+            message_text=notification_text
+        )
         
         await bot.send_message(
             chat_id=config.NOTIFICATION_CHAT_ID,
@@ -112,7 +122,9 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
             username=username,
             status=status,
             article_id=article_id,
-            error=str(e)
+            chat_id=config.NOTIFICATION_CHAT_ID,
+            error=str(e),
+            error_class=type(e).__name__
         )
 
 
@@ -155,21 +167,54 @@ class ResultNotifier:
             return None
     
     async def _get_article_id_from_result(self, result: Dict[str, Any]) -> Optional[int]:
-        """Extract article_id from result."""
-        # Try to get from product_data
-        product_data = result.get("product_data")
-        if product_data:
-            article_id = product_data.get("nm_id") or product_data.get("id")
-            if article_id:
-                return article_id
+        """Extract article_id from result. Priority: direct article_id > input_data > product_data."""
+        # First, try to get article_id directly from result (added in worker from user request)
+        article_id = result.get("article_id")
+        if article_id:
+            logger.debug("article_id_found_directly", article_id=article_id)
+            return article_id
         
-        # Try to get from input_data
+        # Second, try to get from input_data (from user request)
         input_data = result.get("input_data")
         if input_data:
             article_id = input_data.get("article_id")
             if article_id:
+                logger.debug("article_id_found_in_input_data", article_id=article_id)
                 return article_id
         
+        # Third, try to get from product_data (fallback from WB API)
+        product_data = result.get("product_data")
+        if product_data:
+            # Try nm_id first (more common in WB API v4), then id
+            article_id = product_data.get("nm_id") or product_data.get("id")
+            if article_id:
+                logger.debug("article_id_found_in_product_data", article_id=article_id, has_nm_id="nm_id" in product_data, has_id="id" in product_data)
+                return article_id
+        
+        # Last resort: try to get from calculation data in Redis
+        calculation_id = result.get("calculation_id")
+        if calculation_id:
+            try:
+                # Try to get article_id from calculation data stored in Redis
+                calculation_data_json = await self.redis.redis.get(f"calculation:{calculation_id}:data")
+                if calculation_data_json:
+                    import json
+                    calculation_data = json.loads(calculation_data_json)
+                    article_id = calculation_data.get("article_id")
+                    if article_id:
+                        logger.debug("article_id_found_in_calculation_data", article_id=article_id, calculation_id=calculation_id)
+                        return article_id
+            except Exception as e:
+                logger.debug("article_id_fallback_failed", calculation_id=calculation_id, error=str(e))
+        
+        logger.warning(
+            "article_id_not_found",
+            calculation_id=calculation_id,
+            has_product_data=bool(product_data),
+            product_data_keys=list(product_data.keys()) if product_data else [],
+            has_input_data=bool(input_data),
+            result_keys=list(result.keys())
+        )
         return None
 
     async def check_and_notify(self, calculation_id: str, user_id: int, status_message_id: int) -> bool:
@@ -410,6 +455,14 @@ class ResultNotifier:
                     await send_notification(self.bot, username, "🔴", article_id)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
+            else:
+                logger.warning(
+                    "notification_skipped_no_article_id",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id"),
+                    result_keys=list(result.keys()) if result else [],
+                    has_product_data=bool(result.get("product_data")) if result else False
+                )
         
         elif status == "orange_zone" or status == "🟠":
             # Orange zone blocked
@@ -460,6 +513,14 @@ class ResultNotifier:
                     await send_notification(self.bot, username, "🟠", article_id)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
+            else:
+                logger.warning(
+                    "notification_skipped_no_article_id",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id"),
+                    result_keys=list(result.keys()) if result else [],
+                    has_product_data=bool(result.get("product_data")) if result else False
+                )
         
         elif (status == "completed" or status in ("🟢", "🟡")) and calculation_type != "detailed":
             # Express assessment completed (🟢 or 🟡) - but not detailed calculation
@@ -526,6 +587,14 @@ class ResultNotifier:
                     await send_notification(self.bot, username, notification_status, article_id)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
+            else:
+                logger.warning(
+                    "notification_skipped_no_article_id",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id"),
+                    result_keys=list(result.keys()) if result else [],
+                    has_product_data=bool(result.get("product_data")) if result else False
+                )
         
         elif status == "failed":
             # Calculation failed - show white status instead of error
@@ -551,6 +620,14 @@ class ResultNotifier:
                     await send_notification(self.bot, username, "⚪️", article_id)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
+            else:
+                logger.warning(
+                    "notification_skipped_no_article_id",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id"),
+                    result_keys=list(result.keys()) if result else [],
+                    has_product_data=bool(result.get("product_data")) if result else False
+                )
 
     async def start_polling(self, check_interval: float = 2.0):
         """

@@ -392,6 +392,9 @@ class CalculationWorker:
                 else:
                     final_message = formatted_message
                 
+                # Get article_id from user request first, then fallback to product_data
+                article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
+                
                 result = {
                     "status": "blocked",
                     "calculation_id": calculation_id,
@@ -402,8 +405,15 @@ class CalculationWorker:
                     "forbidden_reason": reason,
                     "red_zone_decision": "BLOCK",
                     "red_zone_reason": reason,
-                    "message": final_message
+                    "message": final_message,
+                    "product_data": product_with_filled_fields
                 }
+                
+                # Add article_id and input_data to result for easier access
+                if article_id:
+                    result["article_id"] = article_id
+                if data.get("input_data"):
+                    result["input_data"] = data.get("input_data")
                 
                 await self.redis.setex(
                     f"calculation:{calculation_id}:result",
@@ -415,7 +425,7 @@ class CalculationWorker:
                 # Сохраняем в базу данных
                 if self.db_client:
                     try:
-                        article_id = product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id') or data.get('article_id')
+                        article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
                         if article_id:
                             # Get basket info from Redis if available
                             basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
@@ -547,6 +557,9 @@ class CalculationWorker:
                 # Use formatted message if available, otherwise fallback to base
                 final_message = formatted_message if formatted_message else base_message
                 
+                # Get article_id from user request first, then fallback to product_data
+                article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
+                
                 result = {
                     "status": "blocked",
                     "calculation_id": calculation_id,
@@ -556,8 +569,15 @@ class CalculationWorker:
                     "tn_ved_code": tn_ved_data['tn_ved_code'],
                     "red_zone_decision": "BLOCK",
                     "red_zone_reason": reason,
-                    "message": final_message
+                    "message": final_message,
+                    "product_data": product_with_filled_fields
                 }
+                
+                # Add article_id and input_data to result for easier access
+                if article_id:
+                    result["article_id"] = article_id
+                if data.get("input_data"):
+                    result["input_data"] = data.get("input_data")
                 
                 await self.redis.setex(
                     f"calculation:{calculation_id}:result",
@@ -569,7 +589,7 @@ class CalculationWorker:
                 # Save to database
                 if self.db_client:
                     try:
-                        article_id = product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id') or data.get('article_id')
+                        article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
                         if article_id:
                             # Get basket info from Redis if available
                             basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
@@ -673,6 +693,9 @@ class CalculationWorker:
                 # Use formatted message if available, otherwise fallback to base
                 final_message = formatted_message if formatted_message else assessment_result["message"]
                 
+                # Get article_id from user request first, then fallback to product_data
+                article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
+                
                 result = {
                     "status": "🟠",
                     "calculation_id": calculation_id,
@@ -691,6 +714,12 @@ class CalculationWorker:
                     "message": final_message
                 }
                 
+                # Add article_id and input_data to result for easier access
+                if article_id:
+                    result["article_id"] = article_id
+                if data.get("input_data"):
+                    result["input_data"] = data.get("input_data")
+                
                 await self.redis.setex(
                     f"calculation:{calculation_id}:result",
                     86400,  # 24 hours TTL
@@ -702,7 +731,7 @@ class CalculationWorker:
                 # Save to database
                 if self.db_client:
                     try:
-                        article_id = product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id') or data.get('article_id')
+                        article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
                         if article_id:
                             # Get basket info from Redis if available
                             basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
@@ -757,13 +786,24 @@ class CalculationWorker:
                 # Specific value calculation failed
                 user_id = data.get("user_id")
                 error_message = ErrorHandler.get_user_message_for_calculation_error("specific_value_calculation")
+                
+                # Get article_id from user request first, then fallback to product_data
+                article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
+                
                 result = {
                     "status": "failed",
                     "calculation_id": calculation_id,
                     "user_id": user_id,
                     "error": "specific_value_calculation_failed",
-                    "message": error_message
+                    "message": error_message,
+                    "product_data": product_with_filled_fields
                 }
+                
+                # Add article_id and input_data to result for easier access
+                if article_id:
+                    result["article_id"] = article_id
+                if data.get("input_data"):
+                    result["input_data"] = data.get("input_data")
                 
                 await self.redis.setex(
                     f"calculation:{calculation_id}:result",
@@ -809,6 +849,9 @@ class CalculationWorker:
             final_message = formatted_message if formatted_message else assessment_result["message"]
             
             # Build final result
+            # Get article_id from user request first (data), then fallback to product_data
+            article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
+            
             result = {
                 "status": assessment_status,
                 "calculation_id": calculation_id,
@@ -828,6 +871,12 @@ class CalculationWorker:
                 "message": final_message
             }
             
+            # Add article_id from user request and input_data to result for easier access
+            if article_id:
+                result["article_id"] = article_id
+            if data.get("input_data"):
+                result["input_data"] = data.get("input_data")
+            
             await self.redis.setex(
                 f"calculation:{calculation_id}:result",
                 86400,  # 24 hours TTL
@@ -841,7 +890,7 @@ class CalculationWorker:
             # Save to database
             if self.db_client:
                 try:
-                    article_id = product_with_filled_fields.get('nm_id') or data.get('article_id')
+                    article_id = data.get('article_id') or product_with_filled_fields.get('nm_id') or product_with_filled_fields.get('id')
                     if article_id:
                         # Get basket info from Redis if available
                         basket_info_json = await self.redis.get(f"calculation:{calculation_id}:basket_info")
@@ -1046,7 +1095,7 @@ class CalculationWorker:
             # Save to database (update existing express calculation with detailed result)
             if self.db_client:
                 try:
-                    article_id = product_data.get('id') or product_data.get('nm_id') or data.get('article_id')
+                    article_id = data.get('article_id') or product_data.get('nm_id') or product_data.get('id')
                     if article_id:
                         # Get TN VED code from tnved_data
                         tnved_data = data.get("tnved_data", {})
