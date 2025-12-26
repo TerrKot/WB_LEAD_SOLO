@@ -36,6 +36,7 @@ class GPTService:
         self.api_url = api_url or config.GPT_API_URL
         self.model = model or config.GPT_MODEL
         self.model_for_code = model_for_code or config.GPT_MODEL_FOR_CODE
+        self.model_for_code_with_search = getattr(config, 'GPT_MODEL_FOR_CODE_WITH_SEARCH', 'gpt-4o-search-preview')
 
         if not self.api_key:
             raise ValueError("GPT_API_KEY is required")
@@ -657,12 +658,6 @@ class GPTService:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        logger.debug(
-                            "ifcg_category_description_request_failed",
-                            code=code,
-                            status=resp.status,
-                            url=url
-                        )
                         return None
                     
                     html = await resp.text()
@@ -671,12 +666,6 @@ class GPTService:
                     # Check if code exists
                     page_text = soup.get_text().lower()
                     if any(phrase in page_text for phrase in ["не найден", "не существует", "not found", "404", "ошибка"]):
-                        logger.debug(
-                            "ifcg_category_description_code_not_found",
-                            code=code,
-                            url=url,
-                            page_text_preview=page_text[:200]
-                        )
                         return None
                     
                     # Try to find category description/name
@@ -752,30 +741,23 @@ class GPTService:
             result["exists"] = True
             result["category_description"] = category_description
         else:
-            logger.warning(
-                "candidate_code_not_found_on_ifcg",
-                code=code,
-                url=f"https://www.ifcg.ru/kb/tnved/{code}/",
-                reason="Code returned by GPT but not found on ifcg.ru - rejecting candidate"
-            )
+            logger.debug("candidate_code_not_found_on_ifcg", code=code)
             return result
         
         # Get duty info
         duty_info = await self._parse_ifcg_duty(code)
         result["duty_info"] = duty_info
         
-        # Code is valid only if it exists on ifcg.ru AND duty info was parsed successfully
+        # Code is valid if it exists on ifcg.ru and duty info was parsed successfully
         # 0% duty rate is valid - it means the code exists and has zero duty
         if duty_info and "duty_rate" in duty_info:
             result["is_valid"] = True
         else:
-            logger.warning(
+            logger.debug(
                 "candidate_code_invalid_duty_info",
                 code=code,
                 has_duty_info=bool(duty_info),
-                duty_info_keys=list(duty_info.keys()) if duty_info else [],
-                has_category_description=bool(category_description),
-                reason="Code exists on ifcg.ru but duty info parsing failed"
+                duty_info_keys=list(duty_info.keys()) if duty_info else []
             )
         
         # Calculate match score using GPT
@@ -1195,11 +1177,13 @@ class GPTService:
         
         basic_info = "\n".join(basic_info_parts) if basic_info_parts else "Данные отсутствуют"
         
-        prompt_stage1 = f"""Подбери код ТН ВЭД для товара используя только данные с сайта ifcg.ru.
+        prompt_stage1 = f"""Подбери код ТН ВЭД для товара. Используй поиск в интернете для поиска информации на сайтах ifcg.ru, tnvedcode.ru и других специализированных ресурсах по кодам ТН ВЭД.
 
 ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
 
 {basic_info}
+
+Используй web search для поиска кода ТН ВЭД на специализированных сайтах (ifcg.ru, tnvedcode.ru и др.).
 
 Верни основной код ТН ВЭД и несколько альтернативных кандидатов (5-7 кодов) в формате JSON:
 {{
@@ -1214,7 +1198,9 @@ class GPTService:
 }}"""
         
         try:
-            response = await self._call_gpt_api(prompt_stage1, model=self.model_for_code)
+            # Try with web search model first if available
+            model_to_use = self.model_for_code_with_search if hasattr(self, 'model_for_code_with_search') else self.model_for_code
+            response = await self._call_gpt_api(prompt_stage1, model=model_to_use)
             if not response:
                 logger.warning("gpt_tn_ved_card_stage1_no_response", product_name=product_name, falling_back_to_stage2=True)
                 return await self._get_tn_ved_code_card_stage2(card_data, category_data, product_name, wb_parser)
@@ -1926,16 +1912,6 @@ class GPTService:
         """
         product_name = product_data.get('name', 'Товар') or 'Товар'
         
-        # Check if product_data has enough information
-        if not product_data or len(product_data) < 2:
-            logger.warning(
-                "gpt_tn_ved_full_data_insufficient_data",
-                product_name=product_name,
-                product_data_keys=list(product_data.keys()) if product_data else [],
-                reason="Product data is empty or has too few fields, cannot proceed"
-            )
-            return None
-        
         # Convert product data to JSON string for GPT context
         # Remove non-serializable fields and limit size if needed
         try:
@@ -2019,12 +1995,7 @@ class GPTService:
             # Parse JSON from response
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not content:
-                logger.error(
-                    "gpt_tn_ved_full_data_empty_content",
-                    product_name=product_name,
-                    response_structure=str(response)[:500] if response else None,
-                    product_data_keys=list(product_data.keys()) if product_data else []
-                )
+                logger.error("gpt_tn_ved_full_data_empty_content", product_name=product_name)
                 return None
 
             # Remove markdown code blocks if present
