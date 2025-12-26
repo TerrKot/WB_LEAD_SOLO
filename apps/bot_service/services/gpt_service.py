@@ -1926,6 +1926,16 @@ class GPTService:
         """
         product_name = product_data.get('name', 'Товар') or 'Товар'
         
+        # Check if product_data has enough information
+        if not product_data or len(product_data) < 2:
+            logger.warning(
+                "gpt_tn_ved_full_data_insufficient_data",
+                product_name=product_name,
+                product_data_keys=list(product_data.keys()) if product_data else [],
+                reason="Product data is empty or has too few fields, cannot proceed"
+            )
+            return None
+        
         # Convert product data to JSON string for GPT context
         # Remove non-serializable fields and limit size if needed
         try:
@@ -2009,7 +2019,12 @@ class GPTService:
             # Parse JSON from response
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not content:
-                logger.error("gpt_tn_ved_full_data_empty_content", product_name=product_name)
+                logger.error(
+                    "gpt_tn_ved_full_data_empty_content",
+                    product_name=product_name,
+                    response_structure=str(response)[:500] if response else None,
+                    product_data_keys=list(product_data.keys()) if product_data else []
+                )
                 return None
 
             # Remove markdown code blocks if present
