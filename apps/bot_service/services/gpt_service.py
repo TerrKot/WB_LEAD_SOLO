@@ -960,6 +960,8 @@ class GPTService:
         # ЭТАП 1: Первая попытка - используем только название и описание
         prompt_stage1 = f"""Подбери код ТН ВЭД для товара используя только данные с сайта ifcg.ru.
 
+ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
+
 Название товара: {truncated_name}
 Описание товара: {product_description if product_description else 'Описание отсутствует'}
 
@@ -1152,6 +1154,8 @@ class GPTService:
         
         prompt_stage1 = f"""Подбери код ТН ВЭД для товара используя только данные с сайта ifcg.ru.
 
+ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
+
 {basic_info}
 
 Верни основной код ТН ВЭД и несколько альтернативных кандидатов (5-7 кодов) в формате JSON:
@@ -1304,6 +1308,8 @@ class GPTService:
         description = data_with_desc.get("description", "")
         
         prompt_stage2 = f"""Подбери код ТН ВЭД для товара используя только данные с сайта ifcg.ru.
+
+ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
 
 {basic_info}
 
@@ -1458,6 +1464,8 @@ class GPTService:
             return None
         
         prompt_stage3 = f"""Подбери код ТН ВЭД для товара используя только данные с сайта ifcg.ru.
+
+ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
 
 Ниже представлены все данные о товаре из Wildberries в формате JSON. Используй всю доступную информацию для точного подбора кода ТН ВЭД:
 
@@ -1683,6 +1691,8 @@ class GPTService:
             
             # Now search TN VED code by classified type
             search_prompt = f"""Подбери код ТН ВЭД для товара на основе классификации типа.
+
+ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
 
 Тип товара: {product_type}
 Назначение: {purpose}
@@ -1927,6 +1937,8 @@ class GPTService:
         # ЭТАП 1: GPT подбирает код ТН ВЭД с полными данными
         # Запрашиваем сразу несколько кандидатов (5-7) для повышения надёжности
         prompt = f"""Подбери код ТН ВЭД для товара используя только данные с сайта ifcg.ru.
+
+ВАЖНО: Отвечай кратко, только JSON без дополнительных рассуждений.
 
 Ниже представлены все данные о товаре из Wildberries API в формате JSON. Используй всю доступную информацию для точного подбора кода ТН ВЭД:
 
@@ -2563,10 +2575,10 @@ class GPTService:
         }
         
         # For GPT-5.x models use max_completion_tokens and don't set temperature (only default 1 is supported)
-        # GPT-5 uses reasoning tokens, so we need more tokens for the actual response
+        # GPT-5 uses reasoning tokens, so we need significantly more tokens for reasoning + response
         # GPT-5 may not support response_format, so we'll request JSON in prompt instead
         if "gpt-5" in model_to_use:
-            payload["max_completion_tokens"] = 1000  # Increased to allow reasoning + response
+            payload["max_completion_tokens"] = 2000  # Increased to allow reasoning + response
             # GPT-5 only supports default temperature (1), don't set it
             # GPT-5 may not support response_format, rely on prompt instructions
         else:
