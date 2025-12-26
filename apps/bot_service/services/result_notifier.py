@@ -565,28 +565,46 @@ class ResultNotifier:
             
             # Send message with inline keyboard (if available) and reply keyboard
             # In Telegram, you can't have both in one message, so we'll send reply keyboard separately
-            if inline_keyboard:
-                # Send main message with inline keyboard
-                await self.bot.send_message(
-                    chat_id=user_id,
-                    text=message_text,
-                    parse_mode="HTML",
-                    reply_markup=inline_keyboard
+            try:
+                if inline_keyboard:
+                    # Send main message with inline keyboard
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text=message_text,
+                        parse_mode="HTML",
+                        reply_markup=inline_keyboard
+                    )
+                    # Send reply keyboard in a separate minimal message to ensure it's always visible
+                    try:
+                        await self.bot.send_message(
+                            chat_id=user_id,
+                            text="\u200B",  # Zero-width space (invisible)
+                            reply_markup=main_keyboard
+                        )
+                    except Exception as e:
+                        # If zero-width space fails, try with a space
+                        logger.warning("zero_width_message_failed", user_id=user_id, error=str(e))
+                        await self.bot.send_message(
+                            chat_id=user_id,
+                            text=" ",  # Regular space as fallback
+                            reply_markup=main_keyboard
+                        )
+                else:
+                    # No inline buttons, just send with reply keyboard
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text=message_text,
+                        parse_mode="HTML",
+                        reply_markup=main_keyboard
+                    )
+            except Exception as e:
+                logger.error(
+                    "user_message_send_failed",
+                    user_id=user_id,
+                    calculation_id=result.get("calculation_id"),
+                    error=str(e)
                 )
-                # Send reply keyboard in a separate minimal message to ensure it's always visible
-                await self.bot.send_message(
-                    chat_id=user_id,
-                    text="\u200B",  # Zero-width space (invisible)
-                    reply_markup=main_keyboard
-                )
-            else:
-                # No inline buttons, just send with reply keyboard
-                await self.bot.send_message(
-                    chat_id=user_id,
-                    text=message_text,
-                    parse_mode="HTML",
-                    reply_markup=main_keyboard
-                )
+                # Continue to send notification even if user message failed
             
             logger.info(
                 "calculation_completed_notification_sent",
