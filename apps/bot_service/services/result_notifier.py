@@ -94,8 +94,12 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
         # Format username
         username_str = f"@{username}" if username else "без username"
         
+        # Format WB article link
+        wb_url = f"https://www.wildberries.ru/catalog/{article_id}/detail.aspx"
+        article_link = f"<a href=\"{wb_url}\">{article_id}</a>"
+        
         # Format notification message
-        notification_text = f"{username_str} | Статус: {status} | WB: {article_id}"
+        notification_text = f"{username_str} | Статус: {status} | WB: {article_link}"
         
         # Add TN VED code with link if available
         if tn_ved_code:
