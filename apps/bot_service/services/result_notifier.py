@@ -75,15 +75,16 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     return keyboard
 
 
-async def send_notification(bot: Bot, username: Optional[str], status: str, article_id: int):
+async def send_notification(bot: Bot, username: Optional[str], status: str, article_id: int, tn_ved_code: Optional[str] = None):
     """
-    Send notification to notification group in format: @username | Статус: 🟢 | WB: артикул
+    Send notification to notification group in format: @username | Статус: 🟢 | WB: артикул | ТН ВЭД: код (ссылка)
     
     Args:
         bot: Telegram Bot instance
         username: Telegram username (without @)
         status: Status emoji (🟢, 🟡, 🟠, 🔴, ⚪️)
         article_id: WB article ID
+        tn_ved_code: TN VED code (optional)
     """
     if not config.NOTIFICATION_CHAT_ID:
         logger.debug("notification_skipped_no_chat_id", article_id=article_id, status=status)
@@ -96,18 +97,27 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
         # Format notification message
         notification_text = f"{username_str} | Статус: {status} | WB: {article_id}"
         
+        # Add TN VED code with link if available
+        if tn_ved_code:
+            # Remove spaces and dashes from TN VED code for URL
+            tn_ved_code_clean = str(tn_ved_code).replace(" ", "").replace("-", "")
+            alta_url = f"https://www.alta.ru/tnved/code/{tn_ved_code_clean}/"
+            notification_text += f" | ТН ВЭД: <a href=\"{alta_url}\">{tn_ved_code}</a>"
+        
         logger.info(
             "notification_sending",
             username=username,
             status=status,
             article_id=article_id,
+            tn_ved_code=tn_ved_code,
             chat_id=config.NOTIFICATION_CHAT_ID,
             message_text=notification_text
         )
         
         await bot.send_message(
             chat_id=config.NOTIFICATION_CHAT_ID,
-            text=notification_text
+            text=notification_text,
+            parse_mode="HTML"
         )
         
         logger.info(
@@ -461,8 +471,9 @@ class ResultNotifier:
             article_id = await self._get_article_id_from_result(result)
             if article_id:
                 username = await self._get_username(user_id)
+                tn_ved_code = result.get("tn_ved_code")
                 try:
-                    await send_notification(self.bot, username, "🔴", article_id)
+                    await send_notification(self.bot, username, "🔴", article_id, tn_ved_code)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
             else:
@@ -519,8 +530,9 @@ class ResultNotifier:
             article_id = await self._get_article_id_from_result(result)
             if article_id:
                 username = await self._get_username(user_id)
+                tn_ved_code = result.get("tn_ved_code")
                 try:
-                    await send_notification(self.bot, username, "🟠", article_id)
+                    await send_notification(self.bot, username, "🟠", article_id, tn_ved_code)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
             else:
@@ -642,15 +654,17 @@ class ResultNotifier:
                 )
                 # Use assessment_status if available, otherwise use status
                 notification_status = result.get("assessment_status") or status
+                tn_ved_code = result.get("tn_ved_code")
                 logger.info(
                     "sending_notification",
                     user_id=user_id,
                     article_id=article_id,
                     username=username,
-                    notification_status=notification_status
+                    notification_status=notification_status,
+                    tn_ved_code=tn_ved_code
                 )
                 try:
-                    await send_notification(self.bot, username, notification_status, article_id)
+                    await send_notification(self.bot, username, notification_status, article_id, tn_ved_code)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
             else:
@@ -684,8 +698,9 @@ class ResultNotifier:
             article_id = await self._get_article_id_from_result(result)
             if article_id:
                 username = await self._get_username(user_id)
+                tn_ved_code = result.get("tn_ved_code")
                 try:
-                    await send_notification(self.bot, username, "⚪️", article_id)
+                    await send_notification(self.bot, username, "⚪️", article_id, tn_ved_code)
                 except Exception as e:
                     logger.warning("notification_send_failed_on_result", user_id=user_id, article_id=article_id, error=str(e))
             else:
