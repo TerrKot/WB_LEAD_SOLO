@@ -399,6 +399,13 @@ class ResultNotifier:
                 disable_web_page_preview=True
             )
             
+            # Send message with "New request" button
+            await self.bot.send_message(
+                chat_id=user_id,
+                text="💡 Используйте кнопку ниже для нового запроса",
+                reply_markup=main_keyboard
+            )
+            
             logger.info(
                 "detailed_calculation_notification_sent",
                 user_id=user_id,
