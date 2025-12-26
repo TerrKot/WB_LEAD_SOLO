@@ -103,6 +103,9 @@ async def send_notification(bot: Bot, username: Optional[str], status: str, arti
             tn_ved_code_clean = str(tn_ved_code).replace(" ", "").replace("-", "")
             alta_url = f"https://www.alta.ru/tnved/code/{tn_ved_code_clean}/"
             notification_text += f" | ТН ВЭД: <a href=\"{alta_url}\">{tn_ved_code}</a>"
+        else:
+            # Log when TN VED code is missing (this is normal for some statuses like ⚪️)
+            logger.debug("tn_ved_code_missing_in_notification", status=status, article_id=article_id)
         
         logger.info(
             "notification_sending",
