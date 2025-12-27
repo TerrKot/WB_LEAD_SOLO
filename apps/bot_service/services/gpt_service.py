@@ -2337,10 +2337,10 @@ class GPTService:
             
             # Recommended base values by status
             recommended_bases = {
-                "🟢": {"weight_kg": 800.0, "volume_m3": 3.69},
-                "🟡": {"weight_kg": 1267.0, "volume_m3": 5.84},
-                "🟠": {"weight_kg": 1900.0, "volume_m3": 8.76},
-                "🔴": {"weight_kg": 1900.0, "volume_m3": 8.76}
+                "🟢": {"weight_kg": 500.0, "volume_m3": 2.30},
+                "🟡": {"weight_kg": 800.0, "volume_m3": 3.69},
+                "🟠": {"weight_kg": 1000.0, "volume_m3": 4.60},
+                "🔴": {"weight_kg": 1000.0, "volume_m3": 4.60}
             }
             
             base_values = recommended_bases.get(status)
