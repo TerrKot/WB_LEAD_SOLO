@@ -11,7 +11,7 @@ class ExpressAssessmentGenerator:
     """Service for generating express assessment templates."""
 
     # Threshold for classification
-    SPECIFIC_VALUE_THRESHOLD_USD_PER_KG = 10.0
+    SPECIFIC_VALUE_THRESHOLD_USD_PER_KG = 20.0
 
     @staticmethod
     def classify_by_specific_value(specific_value_usd_per_kg: float) -> AssessmentStatus:
@@ -22,7 +22,7 @@ class ExpressAssessmentGenerator:
             specific_value_usd_per_kg: Specific value in USD/kg
 
         Returns:
-            Assessment status: 🟢 (< 10 USD/kg) or 🟡 (>= 10 USD/kg)
+            Assessment status: 🟢 (< 20 USD/kg) or 🟡 (>= 20 USD/kg)
         """
         if specific_value_usd_per_kg < ExpressAssessmentGenerator.SPECIFIC_VALUE_THRESHOLD_USD_PER_KG:
             return "🟢"
