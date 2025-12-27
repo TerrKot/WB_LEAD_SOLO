@@ -60,6 +60,7 @@ async def daily_report_scheduler(bot: Bot, db_client: DatabaseClient, shutdown_e
     report_service = DailyReportService(bot, db_client)
     moscow_tz = pytz.timezone('Europe/Moscow')
     last_sent_date = None
+    last_sent_time = None
     
     logger.info("daily_report_scheduler_started", report_time="12:00 MSK")
     
@@ -70,18 +71,38 @@ async def daily_report_scheduler(bot: Bot, db_client: DatabaseClient, shutdown_e
             current_hour = now_moscow.hour
             current_minute = now_moscow.minute
             
-            # Check if it's 12:00 MSK and we haven't sent report today
-            if current_hour == 12 and current_minute == 0 and last_sent_date != current_date:
-                logger.info("daily_report_scheduler_triggered", time=now_moscow.strftime("%H:%M"))
+            # Check if it's 12:00 MSK window (12:00-12:01) and we haven't sent report today
+            # Also check that we haven't sent in the last 2 minutes to avoid duplicates
+            should_send = (
+                current_hour == 12 and 
+                current_minute <= 1 and 
+                last_sent_date != current_date
+            )
+            
+            # Additional check: don't send if we already sent in the last 2 minutes
+            if should_send and last_sent_time:
+                time_since_last = (now_moscow - last_sent_time).total_seconds()
+                if time_since_last < 120:  # 2 minutes
+                    should_send = False
+            
+            if should_send:
+                logger.info("daily_report_scheduler_triggered", time=now_moscow.strftime("%H:%M:%S"))
                 success = await report_service.send_report(config.REPORT_CHAT_ID)
                 if success:
                     last_sent_date = current_date
+                    last_sent_time = now_moscow
                     logger.info("daily_report_sent_successfully")
                 else:
                     logger.error("daily_report_send_failed")
             
-            # Sleep for 60 seconds before next check
-            await asyncio.sleep(60)
+            # Sleep for 30 seconds before next check (reduced from 60 to catch 12:00 reliably)
+            # In critical window (11:55-12:05), check more frequently
+            if current_hour == 11 and current_minute >= 55:
+                await asyncio.sleep(10)  # Check every 10 seconds before 12:00
+            elif current_hour == 12 and current_minute <= 5:
+                await asyncio.sleep(10)  # Check every 10 seconds after 12:00
+            else:
+                await asyncio.sleep(30)  # Check every 30 seconds otherwise
             
         except asyncio.CancelledError:
             logger.info("daily_report_scheduler_cancelled")
