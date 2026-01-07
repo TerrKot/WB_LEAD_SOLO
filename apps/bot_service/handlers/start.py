@@ -15,6 +15,7 @@ from apps.bot_service.clients.redis import RedisClient
 from apps.bot_service.clients.database import DatabaseClient, User
 from apps.bot_service.services.input_parser import InputParser
 from apps.bot_service.services.wb_parser import WBParserService
+# from apps.bot_service.services.ozon_parser import OzonParserService  # Ozon parsing disabled
 from apps.bot_service.services.exchange_rate_service import ExchangeRateService
 from apps.bot_service.services.detailed_calculation_service import DetailedCalculationService
 from apps.bot_service.utils.error_handler import ErrorHandler
@@ -490,16 +491,232 @@ async def handle_article_input(message: Message, state: FSMContext):
     input_parser = InputParser()
     
     # Check marketplace type if it's a URL
-    if text.strip().startswith("http://") or text.strip().startswith("https://"):
-        marketplace_type = input_parser.detect_marketplace_type(text.strip())
+    marketplace_type = None
+    # Check if text is a URL (with or without protocol)
+    text_stripped = text.strip()
+    is_url = (
+        text_stripped.startswith("http://") or 
+        text_stripped.startswith("https://") or
+        any(domain in text_stripped.lower() for domain in [
+            'wildberries.ru', 'wildberries.by', 'wildberries.kz', 'wb.ru', 'wb.by', 'wb.kz',
+            # 'ozon.ru', 'ozon.by', 'ozon.kz', 'ozon.com',  # Ozon parsing disabled
+            'market.yandex.ru', 'market.yandex.by', 'market.yandex.kz'
+        ])
+    )
+    
+    if is_url:
+        marketplace_type = input_parser.detect_marketplace_type(text_stripped)
         
+        # Ozon parsing disabled
         if marketplace_type == 'ozon':
             await message.answer(
-                "⚠️ Данный функционал ещё в разработке.\n\n"
-                "Пожалуйста, отправьте ссылку на товар с Wildberries."
+                "⚠️ Парсинг товаров с Ozon временно отключен.\n\n"
+                "Пожалуйста, отправьте ссылку на товар с Wildberries или артикул WB.",
+                reply_markup=get_main_keyboard()
             )
-            logger.info("ozon_link_rejected", user_id=user_id, calculation_id=calculation_id)
+            logger.info("ozon_link_rejected_disabled", user_id=user_id, calculation_id=calculation_id, url=text.strip())
             return
+        
+        # Ozon parsing disabled - commented out
+        # if marketplace_type == 'ozon':
+        #     # Handle Ozon URL parsing
+        #     logger.info("ozon_link_detected", user_id=user_id, calculation_id=calculation_id, url=text.strip())
+        #     
+        #     # Send first status message
+        #     product_info_message = await message.answer("🔍 Получаю данные о товаре с Ozon...")
+        #     product_info_message_id = product_info_message.message_id
+        #     
+        #     # Запускаем ротацию статусов для получения данных о товаре
+        #     product_fetch_stop_event = asyncio.Event()
+        #     bot = get_bot()
+        #     ozon_statuses = [
+        #         "🔍 Получаю данные о товаре с Ozon...",
+        #         "📡 Запрашиваю информацию с Ozon...",
+        #         "🤖 Парсю данные через GPT...",
+        #         "📦 Загружаю характеристики товара...",
+        #         "🌐 Анализирую карточку товара...",
+        #         "📊 Обрабатываю данные о товаре...",
+        #         "⏳ Получаю информацию о товаре..."
+        #     ]
+        #     product_fetch_task = asyncio.create_task(
+        #         rotate_status_messages(
+        #             bot=bot,
+        #             chat_id=user_id,
+        #             message_id=product_info_message_id,
+        #             statuses=ozon_statuses,
+        #             stop_event=product_fetch_stop_event,
+        #             interval=5.0,
+        #             calculation_id=None,
+        #             redis_client=None
+        #         )
+        #     )
+        #     
+        #     ozon_parser = OzonParserService()
+        #     
+        #     try:
+        #         product_data = await ozon_parser.parse_product_by_url(text.strip())
+        #     except Exception as e:
+        #         logger.error(
+        #             "ozon_parsing_error",
+        #             calculation_id=calculation_id,
+        #             user_id=user_id,
+        #             url=text.strip(),
+        #             error=str(e),
+        #             error_type=type(e).__name__
+        #         )
+        #         product_fetch_stop_event.set()
+        #         try:
+        #             await product_fetch_task
+        #         except Exception:
+        #             pass
+        #         
+        #         error_message = "⚪️ Товар недоступен — не удалось получить информацию о товаре с Ozon."
+        #         await message.bot.edit_message_text(
+        #             chat_id=user_id,
+        #             message_id=product_info_message_id,
+        #             text=error_message
+        #         )
+        #         await state.clear()
+        #         await message.answer(
+        #             "💡 Используйте кнопку ниже для нового запроса",
+        #             reply_markup=get_main_keyboard()
+        #         )
+        #         return
+        #     
+        #     product_fetch_stop_event.set()
+        #     try:
+        #         await product_fetch_task
+        #     except Exception:
+        #         pass
+        #     
+        #     if not product_data:
+        #         error_message = "⚪️ Товар недоступен — не удалось получить информацию о товаре с Ozon."
+        #         
+        #         result = {
+        #             "status": "⚪️",
+        #             "calculation_id": calculation_id,
+        #             "user_id": user_id,
+        #             "error": "ozon_product_not_found",
+        #             "message": error_message,
+        #             "calculation_type": "express"
+        #         }
+        #         
+        #         await redis_client.set_calculation_result(calculation_id, result, ttl=86400)
+        #         await redis_client.set_calculation_status(calculation_id, "failed")
+        #         
+        #         await message.bot.edit_message_text(
+        #             chat_id=user_id,
+        #             message_id=product_info_message_id,
+        #             text=error_message
+        #         )
+        #         await state.clear()
+        #         await message.answer(
+        #             "💡 Используйте кнопку ниже для нового запроса",
+        #             reply_markup=get_main_keyboard()
+        #         )
+        #         return
+        #     
+        #     # Process Ozon product data (similar to WB but without card_data/category_data)
+        #     product_name = ozon_parser.get_product_name(product_data) or "Не указано"
+        #     product_price = ozon_parser.get_product_price(product_data)
+        #     price_rub = f"{product_price / 100:.2f} ₽" if product_price else "Не указана"
+        #     product_id = product_data.get('id') or product_data.get('ozon_product_id', 'N/A')
+        #     
+        #     message_lines = [
+        #         "✅ Товар найден!\n",
+        #         f"Название: {product_name}",
+        #         f"Цена: {price_rub}",
+        #         f"Артикул Ozon: {product_id}"
+        #     ]
+        #     
+        #     # Add type if available
+        #     ozon_type = product_data.get('ozon_type') or product_data.get('type')
+        #     if ozon_type:
+        #         message_lines.append(f"Категория: {ozon_type}")
+        #     
+        #     # Add dimensions if available
+        #     weight_kg = ozon_parser.get_product_weight(product_data)
+        #     volume_liters = ozon_parser.get_product_volume(product_data)
+        #     if weight_kg:
+        #         message_lines.append(f"Вес: {weight_kg:.3f} кг")
+        #     if volume_liters:
+        #         message_lines.append(f"Объём: {volume_liters:.3f} л")
+        #     
+        #     await message.bot.edit_message_text(
+        #         chat_id=user_id,
+        #         message_id=product_info_message_id,
+        #         text="\n".join(message_lines)
+        #     )
+        #     
+        #     # Save product data to calculation (same format as WB)
+        #     calculation_data = {
+        #         "user_id": user_id,
+        #         "calculation_type": "express",
+        #         "calculation_id": calculation_id,
+        #         "article_id": product_id,
+        #         "marketplace": "ozon",
+        #         "input_data": {"url": text.strip()}
+        #     }
+        #     
+        #     # Update calculation status
+        #     await redis_client.set_calculation_status(calculation_id, "pending")
+        #     
+        #     # Save product data temporarily (will be used by worker)
+        #     await redis_client.set_calculation_product_data(calculation_id, product_data, ttl=3600)
+        #     
+        #     # Save calculation_data to Redis (for result_notifier fallback)
+        #     await redis_client.redis.setex(
+        #         f"calculation:{calculation_id}:data",
+        #         3600,  # 1 hour TTL
+        #         json.dumps(calculation_data)
+        #     )
+        #     
+        #     # Push to calculation queue for further processing
+        #     await redis_client.push_calculation(calculation_id, calculation_data)
+        #     
+        #     # Clear FSM state
+        #     await state.clear()
+        #     
+        #     logger.info(
+        #         "ozon_calculation_queued",
+        #         calculation_id=calculation_id,
+        #         user_id=user_id,
+        #         product_id=product_id,
+        #         product_name=product_name
+        #     )
+        #     
+        #     # Send second status message (calculation status) - without keyboard as it will be edited
+        #     bot = get_bot()
+        #     calculation_status_message = await message.answer("⏳ Начинаю экспресс-расчёт...")
+        #     calculation_status_message_id = calculation_status_message.message_id
+        #     
+        #     # Запускаем ротацию статусов для экспресс-расчёта
+        #     calculation_stop_event = asyncio.Event()
+        #     calculation_rotation_task = asyncio.create_task(
+        #         rotate_status_messages(
+        #             bot=bot,
+        #             chat_id=user_id,
+        #             message_id=calculation_status_message_id,
+        #             statuses=CALCULATION_STATUSES,
+        #             stop_event=calculation_stop_event,
+        #             interval=5.0,
+        #             calculation_id=calculation_id,
+        #             redis_client=redis_client
+        #         )
+        #     )
+        #     
+        #     # Save calculation status message ID to Redis for later editing
+        #     await redis_client.redis.setex(
+        #         f"calculation:{calculation_id}:status_message_id",
+        #         3600,  # 1 hour TTL
+        #         str(calculation_status_message_id)
+        #     )
+        #     
+        #     # Start background task to check for results
+        #     if bot:
+        #         asyncio.create_task(_poll_calculation_result(bot, redis_client, calculation_id, user_id, calculation_status_message_id))
+        #     
+        #     return
         
         if marketplace_type == 'yandex':
             await message.answer(
@@ -509,29 +726,31 @@ async def handle_article_input(message: Message, state: FSMContext):
             logger.info("yandex_link_rejected", user_id=user_id, calculation_id=calculation_id)
             return
         
-        # If it's a URL but not Wildberries and not detected as Ozon/Yandex, still try to process
+        # If it's a URL but not Wildberries/Yandex, still try to process as WB (Ozon parsing disabled)
         # (might be a different WB domain or format)
         if marketplace_type != 'wildberries' and marketplace_type is not None:
-            await message.answer(
-                "⚠️ Данный функционал ещё в разработке.\n\n"
-                "Пожалуйста, отправьте ссылку на товар с Wildberries."
+            logger.warning(
+                "unknown_marketplace_url",
+                user_id=user_id,
+                marketplace_type=marketplace_type,
+                calculation_id=calculation_id,
+                url=text.strip()
             )
-            logger.info("unknown_marketplace_link_rejected", user_id=user_id, marketplace_type=marketplace_type, calculation_id=calculation_id)
-            return
+            # Continue processing as WB (might be unrecognized WB domain)
     
-    # Extract article ID from input
-    article_id = input_parser.extract_article_from_text(text)
+    # Extract article ID from input (for WB)
+    article_id = input_parser.extract_article_from_url(text) if is_url else input_parser.extract_article_from_text(text)
     
     if not article_id:
         await message.answer(
             "❌ Не удалось извлечь артикул из введённых данных.\n\n"
             "Пожалуйста, введите:\n"
             "• Артикул WB (например: 154345562)\n"
-            "• Или ссылку на карточку товара (например: https://www.wildberries.ru/catalog/154345562/detail.aspx)",
+            "• Или ссылку на карточку товара WB (например: https://www.wildberries.ru/catalog/154345562/detail.aspx)",
             disable_web_page_preview=True,
             reply_markup=get_main_keyboard()
         )
-        logger.warning("article_extraction_failed", user_id=user_id, text_length=len(text))
+        logger.warning("article_extraction_failed", user_id=user_id, text_length=len(text), is_url=is_url)
         return
     
     logger.info("article_extracted", user_id=user_id, article_id=article_id, calculation_id=calculation_id)

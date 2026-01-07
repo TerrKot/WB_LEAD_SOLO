@@ -18,6 +18,7 @@ from apps.bot_service.clients.database import DatabaseClient
 from apps.bot_service.services.fields_validator import FieldsValidator
 from apps.bot_service.services.gpt_service import GPTService
 from apps.bot_service.services.wb_parser import WBParserService
+# from apps.bot_service.services.ozon_parser import OzonParserService  # Ozon parsing disabled
 from apps.bot_service.services.tn_ved_red_zone_checker import TNVEDRedZoneChecker
 from apps.bot_service.services.specific_value_calculator import SpecificValueCalculator
 from apps.bot_service.services.express_assessment_generator import ExpressAssessmentGenerator
@@ -62,6 +63,7 @@ class CalculationWorker:
         self.fields_validator = FieldsValidator()
         self.gpt_service = GPTService()
         self.wb_parser = WBParserService()
+        # self.ozon_parser = OzonParserService()  # Ozon parsing disabled
         self.red_zone_checker = TNVEDRedZoneChecker()
         self.specific_value_calculator = SpecificValueCalculator()
         self.express_assessment_generator = ExpressAssessmentGenerator()
@@ -153,6 +155,10 @@ class CalculationWorker:
                 # Special handling for missing price - product is out of stock
                 if "price" in missing_fields:
                     error_message = "⚪️ Товар отсутствует в наличии — мы не видим цену товара, а без цены расчёт невозможен."
+                    # Determine marketplace (Ozon parsing disabled)
+                    # is_ozon_price_error = product_with_filled_fields.get('ozon_url') is not None or product_with_filled_fields.get('ozon_product_id') is not None
+                    is_ozon_price_error = False  # Ozon parsing disabled
+                    
                     result = {
                         "status": "⚪️",
                         "calculation_id": calculation_id,
@@ -160,8 +166,18 @@ class CalculationWorker:
                         "error": "price_missing",
                         "missing_fields": missing_fields,
                         "message": error_message,
-                        "calculation_type": "express"
+                        "calculation_type": "express",
+                        "marketplace": "wildberries"  # Always wildberries since Ozon parsing disabled
                     }
+                    
+                    # Ozon URL handling disabled
+                    # if is_ozon_price_error:
+                    #     ozon_url = (
+                    #         product_with_filled_fields.get("ozon_url") or
+                    #         data.get("input_data", {}).get("url")
+                    #     )
+                    #     if ozon_url:
+                    #         result["ozon_url"] = ozon_url
                     
                     # Get article_id for notification
                     article_id = data.get('article_id') or product_with_filled_fields.get('id') or product_with_filled_fields.get('nm_id')
@@ -221,20 +237,39 @@ class CalculationWorker:
                 calculation_id=calculation_id
             )
             
-            # Extract product fields for logging and later use
-            product_name = self.wb_parser.get_product_name(product_with_filled_fields) or "Товар"
-            product_description = self.wb_parser.get_product_description(product_with_filled_fields)
-            product_brand = product_with_filled_fields.get('brand') or None
-            product_weight = self.wb_parser.get_product_weight(product_with_filled_fields)
-            # Volume is NOT taken from WB API v4 - only from Basket API (card_data)
-            product_volume = None
+            # Determine marketplace and use appropriate parser (Ozon parsing disabled)
+            # is_ozon = product_with_filled_fields.get('ozon_url') is not None or product_with_filled_fields.get('ozon_product_id') is not None
+            is_ozon = False  # Ozon parsing disabled
             
-            # Fetch card data and category data for enhanced TN VED selection
+            logger.info(
+                "marketplace_detection",
+                calculation_id=calculation_id,
+                is_ozon=is_ozon,
+                # has_ozon_url="ozon_url" in product_with_filled_fields,  # Ozon parsing disabled
+                # has_ozon_product_id="ozon_product_id" in product_with_filled_fields,  # Ozon parsing disabled
+                # ozon_url_value=product_with_filled_fields.get('ozon_url'),  # Ozon parsing disabled
+                # ozon_product_id_value=product_with_filled_fields.get('ozon_product_id'),  # Ozon parsing disabled
+                product_data_keys=list(product_with_filled_fields.keys())[:20]  # First 20 keys for debugging
+            )
+            
+            # parser = self.ozon_parser if is_ozon else self.wb_parser  # Ozon parsing disabled
+            parser = self.wb_parser  # Always use WB parser
+            
+            # Extract product fields for logging and later use
+            product_name = parser.get_product_name(product_with_filled_fields) or "Товар"
+            product_description = parser.get_product_description(product_with_filled_fields)
+            product_brand = product_with_filled_fields.get('brand') or None
+            product_weight = parser.get_product_weight(product_with_filled_fields)
+            # Volume: for WB from card_data (Ozon parsing disabled)
+            product_volume = parser.get_product_volume(product_with_filled_fields)
+            
+            # Fetch card data and category data for enhanced TN VED selection (only for WB)
             article_id = product_with_filled_fields.get('id')
             card_data = None
             category_data = None
             
-            if article_id:
+            # Ozon parsing disabled - always fetch card_data/category_data for WB
+            if article_id:  # Removed "and not is_ozon" since Ozon parsing is disabled
                 try:
                     # Try to get card_data from Redis first (already fetched in handler)
                     card_data_json = await self.redis.get(f"calculation:{calculation_id}:card_data")
@@ -367,6 +402,28 @@ class CalculationWorker:
                         error_class=type(e).__name__
                     )
                     # Continue without card_data - will use fallback approach
+            
+            # Ozon products handling disabled
+            # if is_ozon:
+            #     ozon_type = product_with_filled_fields.get('ozon_type') or product_with_filled_fields.get('type')
+            #     if ozon_type:
+            #         # Create category_data-like structure for Ozon
+            #         category_data = {
+            #             "type_name": ozon_type,
+            #             "category_name": ozon_type
+            #         }
+            #         logger.info(
+            #             "ozon_type_used_for_category",
+            #             calculation_id=calculation_id,
+            #             ozon_type=ozon_type
+            #         )
+            #         
+            #         # Save category_data to Redis
+            #         await self.redis.setex(
+            #             f"calculation:{calculation_id}:category_data",
+            #             3600,  # 1 hour TTL
+            #             json.dumps(category_data)
+            #         )
             
             # If volume is still not set (card_data unavailable or volume not found in card_data),
             # try to get it from GPT (fallback)
@@ -922,6 +979,39 @@ class CalculationWorker:
             if data.get("input_data"):
                 result["input_data"] = data.get("input_data")
             
+            # Add marketplace information for notifications (Ozon parsing disabled)
+            logger.info(
+                "adding_marketplace_info",
+                calculation_id=calculation_id,
+                is_ozon=is_ozon,
+                # has_ozon_url="ozon_url" in product_with_filled_fields,  # Ozon parsing disabled
+                # has_ozon_product_id="ozon_product_id" in product_with_filled_fields,  # Ozon parsing disabled
+                has_input_data="input_data" in data,
+                input_data_url=data.get("input_data", {}).get("url") if data.get("input_data") else None
+            )
+            
+            # Ozon marketplace handling disabled
+            # if is_ozon:
+            #     result["marketplace"] = "ozon"
+            #     # Get Ozon URL from product_data or input_data
+            #     ozon_url = (
+            #         product_with_filled_fields.get("ozon_url") or
+            #         data.get("input_data", {}).get("url")
+            #     )
+            #     if ozon_url:
+            #         result["ozon_url"] = ozon_url
+            #     logger.info(
+            #         "marketplace_info_added_ozon",
+            #         calculation_id=calculation_id,
+            #         ozon_url=ozon_url
+            #     )
+            # else:
+            result["marketplace"] = "wildberries"  # Always wildberries since Ozon parsing disabled
+            logger.info(
+                "marketplace_info_added_wb",
+                calculation_id=calculation_id
+            )
+            
             await self.redis.setex(
                 f"calculation:{calculation_id}:result",
                 86400,  # 24 hours TTL
@@ -1020,8 +1110,11 @@ class CalculationWorker:
                 raise ValueError("Missing required parameters for detailed calculation")
             
             # Get unit price from product data
-            wb_parser = WBParserService()
-            product_price = wb_parser.get_product_price(product_data)
+            # Determine marketplace and use appropriate parser (Ozon parsing disabled)
+            # is_ozon = product_data.get('ozon_url') is not None or product_data.get('ozon_product_id') is not None
+            # parser = self.ozon_parser if is_ozon else self.wb_parser
+            parser = self.wb_parser  # Always use WB parser since Ozon parsing disabled
+            product_price = parser.get_product_price(product_data)
             unit_price_rub = product_price / 100.0 if product_price else 0
             
             # Get current exchange rates from CBR API
@@ -1213,8 +1306,11 @@ class CalculationWorker:
     
     def _format_detailed_result(self, detailed_result: dict, product_data: dict, tnved_data: dict = None) -> str:
         """Format detailed calculation result for user message."""
-        wb_parser = WBParserService()
-        product_name = wb_parser.get_product_name(product_data) or "Товар"
+        # Determine marketplace and use appropriate parser (Ozon parsing disabled)
+        # is_ozon = product_data.get('ozon_url') is not None or product_data.get('ozon_product_id') is not None
+        # parser = self.ozon_parser if is_ozon else self.wb_parser
+        parser = self.wb_parser  # Always use WB parser since Ozon parsing disabled
+        product_name = parser.get_product_name(product_data) or "Товар"
         
         base_info = detailed_result.get("base_info", {})
         quantity = detailed_result.get("quantity", 0)
