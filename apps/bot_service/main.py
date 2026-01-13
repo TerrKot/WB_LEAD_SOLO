@@ -198,9 +198,15 @@ async def main():
         # Start daily report scheduler if configured
         report_scheduler_task = None
         if config.REPORT_CHAT_ID and db_client:
+            logger.info("daily_report_scheduler_starting", report_chat_id=config.REPORT_CHAT_ID)
             report_scheduler_task = asyncio.create_task(
                 daily_report_scheduler(bot, db_client, shutdown_event)
             )
+        else:
+            if not config.REPORT_CHAT_ID:
+                logger.warning("daily_report_scheduler_not_started", reason="REPORT_CHAT_ID not configured")
+            if not db_client:
+                logger.warning("daily_report_scheduler_not_started", reason="db_client not available")
         
         # Wait for shutdown signal or polling completion
         tasks_to_wait = [polling_task, asyncio.create_task(shutdown_event.wait())]

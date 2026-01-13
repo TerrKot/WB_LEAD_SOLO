@@ -66,6 +66,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app
       - REDIS_URL=redis://redis:6379/0
+      - TZ=Europe/Moscow
     healthcheck:
       test:
         [
@@ -105,6 +106,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app
       - REDIS_URL=redis://redis:6379/0
+      - TZ=Europe/Moscow
     healthcheck:
       test:
         ["CMD-SHELL", "ps aux | grep '[p]ython.*calculation_worker' || exit 1"]
