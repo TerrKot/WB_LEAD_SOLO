@@ -1,18 +1,7 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: wb_lead_redis
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    restart: always
-    networks:
-      - wb_lead_network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
+  # Redis removed - using external container 'checklist_redis'
+  # To connect external Redis to network, run:
+  # docker network connect docker_wb_lead_network checklist_redis
 
   postgres:
     image: postgres:16-alpine
@@ -41,7 +30,12 @@ services:
       if ! docker network inspect docker_wb_lead_network >/dev/null 2>&1; then
         docker network create docker_wb_lead_network;
       fi &&
-      echo 'Network initialized'
+      if docker ps --format '{{.Names}}' | grep -q '^checklist_redis$$'; then
+        if ! docker network inspect docker_wb_lead_network --format '{{range .Containers}}{{.Name}}{{end}}' | grep -q 'checklist_redis'; then
+          docker network connect docker_wb_lead_network checklist_redis 2>/dev/null || echo 'Redis already connected or connection failed';
+        fi;
+      fi &&
+      echo 'Network initialized and external Redis connected'
       "
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -65,7 +59,7 @@ services:
       - wb_lead_network
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://checklist_redis:6379/0
       - TZ=Europe/Moscow
     healthcheck:
       test:
@@ -82,8 +76,6 @@ services:
       retries: 3
       start_period: 40s
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       network_init:
@@ -105,7 +97,7 @@ services:
       - wb_lead_network
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/app
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://checklist_redis:6379/0
       - TZ=Europe/Moscow
     healthcheck:
       test:
@@ -124,15 +116,12 @@ services:
           cpus: "0.25"
           memory: 256M
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       network_init:
         condition: service_completed_successfully
 
 volumes:
-  redis_data:
   postgres_data:
 
 networks:
