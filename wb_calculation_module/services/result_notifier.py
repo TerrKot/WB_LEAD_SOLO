@@ -5,9 +5,9 @@ import re
 from typing import Optional, Dict, Any
 import structlog
 
-from apps.bot_service.clients.redis import RedisClient
-from apps.bot_service.clients.database import DatabaseClient
-from apps.bot_service.config import config
+from wb_calculation_module.clients.redis import RedisClient
+from wb_calculation_module.clients.database import DatabaseClient
+from wb_calculation_module.config import config
 from aiogram import Bot
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -215,7 +215,7 @@ class ResultNotifier:
         
         try:
             from sqlalchemy import select
-            from apps.bot_service.clients.database import User
+            from wb_calculation_module.clients.database import User
             
             session = await self.db_client.get_session()
             try:
