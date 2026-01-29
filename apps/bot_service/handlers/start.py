@@ -57,6 +57,55 @@ def get_bot() -> Bot:
     """Get Bot instance for handlers."""
     return _bot
 
+
+async def update_user_from_telegram(user_id: int, from_user=None):
+    """
+    Update user data from Telegram API.
+    
+    Args:
+        user_id: Telegram user ID
+        from_user: Optional User object from message/callback (for fallback)
+    """
+    db_client: DatabaseClient = get_db_client()
+    bot: Bot = get_bot()
+    
+    if not db_client or not bot:
+        return
+    
+    try:
+        # Try to get username from Telegram API (most reliable)
+        username = None
+        first_name = None
+        last_name = None
+        language_code = None
+        
+        try:
+            chat = await bot.get_chat(user_id)
+            username = chat.username
+            first_name = chat.first_name
+            last_name = chat.last_name
+        except Exception as e:
+            logger.debug("telegram_api_fetch_failed", user_id=user_id, error=str(e))
+            # Fallback to from_user if available
+            if from_user:
+                username = from_user.username
+                first_name = from_user.first_name
+                last_name = from_user.last_name
+                language_code = from_user.language_code
+        
+        # Update user in database
+        await db_client.save_or_update_user(
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            language_code=language_code
+        )
+    except Exception as e:
+        logger.debug("user_update_failed", user_id=user_id, error=str(e))
+        # Don't fail the request if user update fails
+
+
 # FSM States
 class ExpressCalculationStates(StatesGroup):
     """FSM states for express calculation."""
@@ -237,19 +286,8 @@ async def handle_start_logic(message: Message, state: FSMContext, is_new_request
         )
         return
     
-    # Save or update user data in database
-    if db_client:
-        try:
-            await db_client.save_or_update_user(
-                user_id=user_id,
-                username=from_user.username,
-                first_name=from_user.first_name,
-                last_name=from_user.last_name,
-                language_code=from_user.language_code
-            )
-        except Exception as e:
-            logger.warning("user_save_failed", user_id=user_id, error=str(e))
-            # Continue even if user save fails
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     
     # Check if user already accepted agreement
     agreement_accepted = await redis_client.is_user_agreement_accepted(user_id)
@@ -365,6 +403,10 @@ async def start_express_calculation(message: Message, redis_client: RedisClient,
 async def handle_agreement_accepted(callback: CallbackQuery, state: FSMContext):
     """Handle agreement acceptance - save status and start express calculation."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     
     # Get redis_client from bot data
     redis_client: RedisClient = get_redis_client()
@@ -378,12 +420,14 @@ async def handle_agreement_accepted(callback: CallbackQuery, state: FSMContext):
     # Save agreement acceptance
     await redis_client.set_user_agreement_accepted(user_id)
     
-    # Save agreement acceptance to database
+    # Update user data from Telegram API and save agreement acceptance
     db_client: DatabaseClient = get_db_client()
     if db_client:
         try:
             from datetime import datetime
-            from_user = callback.from_user
+            # First update user data from Telegram API
+            await update_user_from_telegram(user_id, from_user)
+            # Then update agreement acceptance timestamp
             await db_client.save_or_update_user(
                 user_id=user_id,
                 username=from_user.username,
@@ -422,6 +466,10 @@ async def handle_agreement_accepted(callback: CallbackQuery, state: FSMContext):
 async def handle_agreement_rejected(callback: CallbackQuery):
     """Handle agreement rejection."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     
     await callback.answer("Соглашение отклонено")
     await callback.message.answer("Для использования бота необходимо принять пользовательское соглашение.")
@@ -433,6 +481,10 @@ async def handle_agreement_rejected(callback: CallbackQuery):
 async def handle_article_input(message: Message, state: FSMContext):
     """Handle article ID or URL input from user."""
     user_id = message.from_user.id
+    from_user = message.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     text = message.text or ""
     
     # Check if user clicked "Новый запрос" button - redirect to new request handler
@@ -1184,6 +1236,8 @@ async def handle_article_input(message: Message, state: FSMContext):
 @router.message(F.text.in_(["Новый запрос", "🔄 Новый запрос"]))
 async def handle_new_request_button(message: Message, state: FSMContext):
     """Handle 'Новый запрос' button click - same as /newrequest command."""
+    # Update user data from Telegram API
+    await update_user_from_telegram(message.from_user.id, message.from_user)
     await handle_start_logic(message, state, is_new_request=True)
     logger.info("new_request_button_clicked", user_id=message.from_user.id)
 
@@ -1192,6 +1246,10 @@ async def handle_new_request_button(message: Message, state: FSMContext):
 async def handle_unknown_message(message: Message, state: FSMContext):
     """Handle messages that don't match any specific handler."""
     user_id = message.from_user.id
+    from_user = message.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     text = message.text or ""
     current_state = await state.get_state()
     
@@ -1284,6 +1342,8 @@ async def _poll_calculation_result(bot: Bot, redis_client: RedisClient, calculat
 @router.callback_query(F.data == "new_request")
 async def handle_new_request_callback(callback: CallbackQuery, state: FSMContext):
     """Handle 'Новый запрос' inline button click - same as /newrequest command."""
+    # Update user data from Telegram API
+    await update_user_from_telegram(callback.from_user.id, callback.from_user)
     await callback.answer()
     user_id = callback.from_user.id
     
@@ -1338,6 +1398,10 @@ async def handle_new_request_callback(callback: CallbackQuery, state: FSMContext
 async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext):
     """Handle detailed calculation button click - show parameters screen."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     
     # Extract calculation_id from callback data
     calculation_id = callback.data.split(":", 1)[1]
@@ -1531,6 +1595,10 @@ async def handle_detailed_calculation(callback: CallbackQuery, state: FSMContext
 async def handle_adjust_weight(callback: CallbackQuery, state: FSMContext):
     """Handle weight adjustment button - request new weight value."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     calculation_id = callback.data.split(":", 1)[1]
     
     await state.set_state(DetailedCalculationStates.waiting_for_weight)
@@ -1548,6 +1616,10 @@ async def handle_adjust_weight(callback: CallbackQuery, state: FSMContext):
 async def handle_adjust_volume(callback: CallbackQuery, state: FSMContext):
     """Handle volume adjustment button - request new volume value."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     calculation_id = callback.data.split(":", 1)[1]
     
     await state.set_state(DetailedCalculationStates.waiting_for_volume)
@@ -1565,6 +1637,10 @@ async def handle_adjust_volume(callback: CallbackQuery, state: FSMContext):
 async def handle_adjust_purchase_price(callback: CallbackQuery, state: FSMContext):
     """Handle purchase price adjustment button - request new price value."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     calculation_id = callback.data.split(":", 1)[1]
     
     await state.set_state(DetailedCalculationStates.waiting_for_purchase_price)
@@ -1582,6 +1658,10 @@ async def handle_adjust_purchase_price(callback: CallbackQuery, state: FSMContex
 async def handle_weight_input(message: Message, state: FSMContext):
     """Handle weight input from user."""
     user_id = message.from_user.id
+    from_user = message.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     text = message.text or ""
     
     try:
@@ -1609,6 +1689,10 @@ async def handle_weight_input(message: Message, state: FSMContext):
 async def handle_volume_input(message: Message, state: FSMContext):
     """Handle volume input from user."""
     user_id = message.from_user.id
+    from_user = message.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     text = message.text or ""
     
     try:
@@ -1638,6 +1722,10 @@ async def handle_volume_input(message: Message, state: FSMContext):
 async def handle_purchase_price_input(message: Message, state: FSMContext):
     """Handle purchase price input from user (in CNY)."""
     user_id = message.from_user.id
+    from_user = message.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     text = message.text or ""
     
     try:
@@ -1665,6 +1753,10 @@ async def handle_purchase_price_input(message: Message, state: FSMContext):
 async def handle_calculate_detailed(callback: CallbackQuery, state: FSMContext):
     """Handle detailed calculation button - start detailed calculation."""
     user_id = callback.from_user.id
+    from_user = callback.from_user
+    
+    # Update user data from Telegram API
+    await update_user_from_telegram(user_id, from_user)
     original_calculation_id = callback.data.split(":", 1)[1]
     
     # Get redis_client

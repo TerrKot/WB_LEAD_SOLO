@@ -37,7 +37,7 @@ restart_service() {
 }
 
 check_and_restart_workers() {
-    local expected_workers=5
+    local expected_workers=10
     local running_workers=$(docker compose ps worker --format json 2>/dev/null | grep -c '"State":"running"' || echo "0")
     
     if [ "$running_workers" -lt "$expected_workers" ]; then
@@ -81,4 +81,9 @@ for i in {1..5}; do
 done
 
 echo "✅ Health check completed"
+
+
+
+
+
 

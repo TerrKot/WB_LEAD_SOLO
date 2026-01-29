@@ -142,15 +142,33 @@ class TestResultNotifierNotifications:
         assert article_id == 154345562
 
     @pytest.mark.asyncio
-    async def test_get_username_from_db(self, notifier, mock_db):
-        """Test getting username from database."""
+    async def test_get_username_from_telegram_api(self, notifier):
+        """Test getting username from Telegram API first."""
+        mock_chat = MagicMock()
+        mock_chat.username = "telegram_user"
+        mock_chat.first_name = "Test"
+        mock_chat.last_name = "User"
+        notifier.bot.get_chat = AsyncMock(return_value=mock_chat)
+        
+        username = await notifier._get_username(12345)
+        
+        assert username == "telegram_user"
+        notifier.bot.get_chat.assert_called_once_with(12345)
+
+    @pytest.mark.asyncio
+    async def test_get_username_from_db_fallback(self, notifier, mock_db):
+        """Test fallback to database when Telegram API fails."""
         from sqlalchemy import select
         from apps.bot_service.clients.database import User
         
+        # Telegram API fails
+        notifier.bot.get_chat = AsyncMock(side_effect=Exception("API error"))
+        
+        # Database returns username
         mock_session = MagicMock()
         mock_result = MagicMock()
         mock_user = MagicMock()
-        mock_user.username = "testuser"
+        mock_user.username = "db_user"
         mock_result.scalar_one_or_none = MagicMock(return_value=mock_user)
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.close = AsyncMock()
@@ -158,12 +176,44 @@ class TestResultNotifierNotifications:
         
         username = await notifier._get_username(12345)
         
-        assert username == "testuser"
+        assert username == "db_user"
+        mock_session.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_username_from_db_when_no_username_in_telegram(self, notifier, mock_db):
+        """Test fallback to database when Telegram API returns no username."""
+        from sqlalchemy import select
+        from apps.bot_service.clients.database import User
+        
+        # Telegram API returns chat without username
+        mock_chat = MagicMock()
+        mock_chat.username = None
+        notifier.bot.get_chat = AsyncMock(return_value=mock_chat)
+        
+        # Database returns username
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_user = MagicMock()
+        mock_user.username = "db_user"
+        mock_result.scalar_one_or_none = MagicMock(return_value=mock_user)
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.close = AsyncMock()
+        mock_db.get_session = AsyncMock(return_value=mock_session)
+        
+        username = await notifier._get_username(12345)
+        
+        assert username == "db_user"
         mock_session.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_username_not_found(self, notifier, mock_db):
-        """Test getting username when user not found."""
+        """Test getting username when not found in Telegram API or database."""
+        # Telegram API returns chat without username
+        mock_chat = MagicMock()
+        mock_chat.username = None
+        notifier.bot.get_chat = AsyncMock(return_value=mock_chat)
+        
+        # Database returns None
         mock_session = MagicMock()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none = MagicMock(return_value=None)
@@ -181,7 +231,29 @@ class TestResultNotifierNotifications:
         """Test getting username when db_client is None."""
         notifier = ResultNotifier(mock_bot, mock_redis, None)
         
+        # Telegram API returns chat without username
+        mock_chat = MagicMock()
+        mock_chat.username = None
+        notifier.bot.get_chat = AsyncMock(return_value=mock_chat)
+        
         username = await notifier._get_username(12345)
         
         assert username is None
+
+    @pytest.mark.asyncio
+    async def test_get_username_telegram_api_error_no_db(self, mock_bot, mock_redis):
+        """Test getting username when Telegram API fails and no db_client."""
+        notifier = ResultNotifier(mock_bot, mock_redis, None)
+        
+        # Telegram API fails
+        notifier.bot.get_chat = AsyncMock(side_effect=Exception("API error"))
+        
+        username = await notifier._get_username(12345)
+        
+        assert username is None
+
+
+
+
+
 

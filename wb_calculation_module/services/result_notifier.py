@@ -209,26 +209,35 @@ class ResultNotifier:
         self.db_client = db_client
     
     async def _get_username(self, user_id: int) -> Optional[str]:
-        """Get username from database or return None."""
-        if not self.db_client:
-            return None
-        
+        """Get username from Telegram API first, then fallback to database."""
+        # First, try to get username from Telegram API (most reliable)
         try:
-            from sqlalchemy import select
-            from wb_calculation_module.clients.database import User
-            
-            session = await self.db_client.get_session()
-            try:
-                result = await session.execute(
-                    select(User).where(User.user_id == user_id)
-                )
-                user = result.scalar_one_or_none()
-                return user.username if user else None
-            finally:
-                await session.close()
+            chat = await self.bot.get_chat(user_id)
+            if chat.username:
+                return chat.username
         except Exception as e:
-            logger.warning("username_fetch_failed", user_id=user_id, error=str(e))
-            return None
+            logger.debug("username_fetch_from_telegram_failed", user_id=user_id, error=str(e))
+        
+        # Fallback: try to get from database
+        if self.db_client:
+            try:
+                from sqlalchemy import select
+                from wb_calculation_module.clients.database import User
+                
+                session = await self.db_client.get_session()
+                try:
+                    result = await session.execute(
+                        select(User).where(User.user_id == user_id)
+                    )
+                    user = result.scalar_one_or_none()
+                    if user and user.username:
+                        return user.username
+                finally:
+                    await session.close()
+            except Exception as e:
+                logger.debug("username_fetch_from_db_failed", user_id=user_id, error=str(e))
+        
+        return None
     
     async def _get_article_id_from_result(self, result: Dict[str, Any]) -> Optional[int]:
         """Extract article_id from result. Priority: direct article_id > input_data > product_data."""
